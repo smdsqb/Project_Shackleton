@@ -1,7 +1,7 @@
 // Vercel function: real Sun and Earth positions as seen from the Shackleton crater rim, from NASA JPL Horizons.
-const SITE = '129.78,-89.9,0'; // east longitude, latitude, altitude km (Shackleton crater)
+const DEFAULT_SITE = '129.78,-89.9,0'; // east longitude, latitude, altitude km (Shackleton crater centre)
 
-async function track(body: string, start: Date, stop: Date) {
+async function track(body: string, start: Date, stop: Date, SITE: string) {
   const f = (d: Date) => d.toISOString().slice(0, 16).replace('T', ' ');
   const q = new URLSearchParams({
     format: 'json', COMMAND: `'${body}'`, OBJ_DATA: "'NO'", MAKE_EPHEM: "'YES'", EPHEM_TYPE: "'OBSERVER'",
@@ -23,11 +23,15 @@ async function track(body: string, start: Date, stop: Date) {
   return { t0: start.getTime(), step: 3600000, az, el };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  // the baked LOLA tile reports its own site; accept it (validated) so Sun/Earth azimuths match the real terrain
+  const u = new URL(request.url), lat = Number(u.searchParams.get('lat')), lon = Number(u.searchParams.get('lon')), alt = Number(u.searchParams.get('alt') ?? 0);
+  const SITE = u.searchParams.has('lat') && Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && lon >= 0 && lon <= 360 && Math.abs(alt) < 20
+    ? `${lon.toFixed(5)},${lat.toFixed(5)},${alt.toFixed(3)}` : DEFAULT_SITE;
   const start = new Date(Math.floor(Date.now() / 3600000) * 3600000);
   const stop = new Date(start.getTime() + 30 * 86400000);
   try {
-    const [sun, earth] = await Promise.all([track('10', start, stop), track('399', start, stop)]);
+    const [sun, earth] = await Promise.all([track('10', start, stop, SITE), track('399', start, stop, SITE)]);
     return Response.json({ source: 'NASA JPL Horizons', sun, earth }, { headers: { 'Cache-Control': 's-maxage=3600, stale-while-revalidate=86400' } });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 502 });

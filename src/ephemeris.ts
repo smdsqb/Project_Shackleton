@@ -2,9 +2,10 @@ import { sunDirection } from './sun';
 type Track = { t0: number; step: number; az: number[]; el: number[] };
 let eph: { sun: Track; earth: Track } | null = null;
 
-export async function loadEphemeris(): Promise<boolean> {
+export async function loadEphemeris(site?: { lat: number; lon: number; elevM: number } | null): Promise<boolean> {
   try {
-    const r = await fetch('/api/ephemeris', { signal: AbortSignal.timeout(15000) });
+    const q = site ? `?lat=${site.lat.toFixed(5)}&lon=${site.lon.toFixed(5)}&alt=${(site.elevM / 1000).toFixed(3)}` : '';
+    const r = await fetch('/api/ephemeris' + q, { signal: AbortSignal.timeout(15000) });
     if (!r.ok) return false;
     const d = await r.json();
     if (!d?.sun?.az?.length || !d?.earth?.az?.length) return false;

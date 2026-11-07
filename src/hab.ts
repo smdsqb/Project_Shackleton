@@ -9,6 +9,12 @@ import { NASA, panelTexture, tileTexture, crinkleTexture, meatball, worm, plateT
 // design placeholders. Every edge is radiused, every surface carries NASA livery.
 export const HAB_R = 5.41, WALL_H = 2.2, CAP_H = 1.4;
 const TL = 2.2, R_IN = 4.4, PR = 0.3, LOCK_P = 101.3, EVA_H = 8, CYCLE_S = 14;
+const DON_S = 30, DOFF_S = 14; // seconds to get into / out of the suit
+const DON_STAGES = ['TAKING SUIT OFF THE RACK', 'LCVG AND COMMS CAP ON', 'HARD UPPER TORSO AND BOOTS', 'GLOVES AND HELMET RING LATCHED', 'O2 AND WATER UMBILICAL CONNECTED', 'LEAK CHECK AT 4.3 PSI', 'PURGING SUIT WITH PURE O2'];
+const DOFF_STAGES = ['VENTING SUIT', 'HELMET AND GLOVES OFF', 'RACKING SUIT, RECHARGING O2'];
+// portholes: angle psi around the drum (x = cos, z = sin) and height; each is a real hole in the wall
+const WINDOWS = [{ psi: -0.3 * Math.PI, y: 1.65 }, { psi: -0.9 * Math.PI, y: 1.7 }, { psi: 1.22, y: 1.5 }, { psi: 1.92, y: 1.5 }];
+const WIN_R = 0.29;
 type Door = { open: boolean; k: number; pivot: THREE.Group; lamp: THREE.MeshBasicMaterial; dir: number };
 type Lock = { name: string; ang: number; ca: number; sa: number; p: number; cyc: number | null; inner: Door; outer: Door };
 type Item = { x: number; z: number; reach: number; text: () => string; run: () => string };
@@ -16,12 +22,40 @@ type Item = { x: number; z: number; reach: number; text: () => string; run: () =
 const mat = (c: number, glow = false, rough = 0.55, metal = 0.1) =>
   new THREE.MeshStandardMaterial({ color: c, roughness: rough, metalness: metal, ...(glow ? { emissive: c, emissiveIntensity: 1.2 } : {}) });
 const rbox = (w: number, h: number, d: number, r = 0.04) => new RoundedBoxGeometry(w, h, d, 3, Math.max(0.002, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001)));
-function label(text: string, w = 1.3) {
+function label(text: string, w = 0.55) {
   return new THREE.Mesh(new THREE.PlaneGeometry(w, (w * 96) / 512), new THREE.MeshBasicMaterial({ map: plateTexture(text) }));
+}
+/** Alpha mask for one wall arc: opaque everywhere except where a porthole is cut through. */
+function windowAlpha(start: number, arc: number) {
+  const c = document.createElement('canvas'); c.width = 2048; c.height = 512;
+  const g = c.getContext('2d')!; g.fillStyle = '#fff'; g.fillRect(0, 0, 2048, 512); g.fillStyle = '#000';
+  for (const w of WINDOWS) {
+    const th = ((((Math.PI / 2 - w.psi) - start) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    if (th > arc) continue;
+    g.beginPath(); g.ellipse((th / arc) * 2048, (1 - w.y / WALL_H) * 512, (WIN_R / (arc * HAB_R)) * 2048, (WIN_R / WALL_H) * 512, 0, 0, Math.PI * 2); g.fill();
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.NoColorSpace; return t;
+}
+/** Soft contact shadow on the floor under furniture and racks: cheap ambient occlusion. */
+let aoTex: THREE.CanvasTexture | null = null;
+function aoBlob(w: number, d: number) {
+  if (!aoTex) {
+    const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d')!;
+    const gr = g.createRadialGradient(64, 64, 8, 64, 64, 64); gr.addColorStop(0, 'rgba(0,0,0,.55)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 128, 128); aoTex = new THREE.CanvasTexture(c);
+  }
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: aoTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
+  m.renderOrder = 1; return m;
 }
 
 export class Hab {
-  prompt = ''; toast = ''; suitOn = false; suitHours = EVA_H; exposed = false; where = 'HAB';
+  prompt = ''; toast = ''; suitHours = EVA_H; exposed = false; where = 'HAB';
+  suitState: 'rack' | 'donning' | 'on' | 'doffing' = 'rack';
+  taskLabel = ''; taskProgress = 0; onComms: (() => void) | null = null;
+  get suitOn() { return this.suitState === 'on'; }
+  get busy() { return this.suitState === 'donning' || this.suitState === 'doffing'; }
+  private suitT = 0; private suitStage = -1; private suitMeshes: THREE.Group[] = []; private suitTaken: THREE.Group | null = null;
+  private lights: { l: THREE.PointLight; base: number; color: number }[] = []; private glows: { m: THREE.MeshStandardMaterial; base: number }[] = []; private clock = 0; private powerK = 1;
   private locks: Lock[] = []; private circles: { x: number; z: number; r: number }[] = [];
   private items: Item[] = []; private best: Item | null = null; private toastT = 0;
   private root = new THREE.Group();
@@ -44,8 +78,10 @@ export class Hab {
     const kickM = new THREE.MeshStandardMaterial({ color: NASA.graphite, roughness: 0.7, side: THREE.BackSide });
     const trimM = mat(0xc9ced6, false, 0.35, 0.45);
     for (const s of starts) {
-      mesh(new THREE.CylinderGeometry(R, R, WALL_H, 72, 1, true, s, arc), shellM, 0, WALL_H / 2, 0, this.root, true);
-      mesh(new THREE.CylinderGeometry(R - 0.06, R - 0.06, WALL_H, 72, 1, true, s, arc), liningM, 0, WALL_H / 2, 0);
+      const alpha = windowAlpha(s, arc), shellW = shellM.clone(), liningW = liningM.clone();
+      shellW.alphaMap = liningW.alphaMap = alpha; shellW.alphaTest = liningW.alphaTest = 0.5;
+      mesh(new THREE.CylinderGeometry(R, R, WALL_H, 72, 1, true, s, arc), shellW, 0, WALL_H / 2, 0, this.root, true);
+      mesh(new THREE.CylinderGeometry(R - 0.06, R - 0.06, WALL_H, 72, 1, true, s, arc), liningW, 0, WALL_H / 2, 0);
       mesh(new THREE.CylinderGeometry(R + 0.14, R + 0.14, 0.55, 72, 1, true, s, arc), gold, 0, 0.275, 0, this.root, true);
       mesh(new THREE.CylinderGeometry(R - 0.07, R - 0.07, 0.14, 72, 1, true, s, arc), bandM, 0, 1.0, 0);
       mesh(new THREE.CylinderGeometry(R - 0.07, R - 0.07, 0.28, 72, 1, true, s, arc), kickM, 0, 0.14, 0);
@@ -59,21 +95,29 @@ export class Hab {
 
     // floor (tiled composite decking) and the soft ceiling light ring
     mesh(new THREE.CircleGeometry(R - 0.06, 64).rotateX(-P / 2), new THREE.MeshStandardMaterial({ map: tileTexture('#a3a9b2', '#7d848e', 12), roughness: 0.8 }), 0, 0.03, 0);
-    mesh(new THREE.TorusGeometry(3, 0.06, 12, 64).rotateX(P / 2), mat(0xf4f7ff, true), 0, 3.28, 0);
-    for (const [x, z] of [[-2, -1.8], [2, -1.8], [-2, 1.8], [2, 1.8]]) { const l = new THREE.PointLight(0xfff6ec, 16, 14, 2); l.position.set(x, 3, z); this.root.add(l); }
+    const glowM = (c: number, k = 1.1) => { const m = new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: k, roughness: 0.4 }); this.glows.push({ m, base: k }); return m; };
+    mesh(new THREE.TorusGeometry(3, 0.05, 12, 64).rotateX(P / 2), glowM(0xe6eeff, 0.9), 0, 3.28, 0);
+    mesh(new THREE.TorusGeometry(1.2, 0.04, 12, 48).rotateX(P / 2), glowM(0xffe2bd, 0.6), 0, 3.42, 0);
+    // lighting plan: cool general light, cooler task light over the lab, warm light at the galley and bunks, a cyan wash at the comms desk
+    const lamp = (c: number, i: number, dist: number, x: number, y: number, z: number) => { const l = new THREE.PointLight(c, i, dist, 2); l.position.set(x, y, z); this.root.add(l); this.lights.push({ l, base: i, color: c }); };
+    lamp(0xe4ecff, 15, 11, 0, 3.0, 0);
+    for (const x of [-2, 0, 2]) lamp(0xd2e4ff, 6, 5, x, 2.5, -1.6);
+    lamp(0xffd6a6, 9, 6, 0, 2.5, 1.9);
+    lamp(0xffcf9a, 5, 5, 0, 2.3, 3.6);
+    lamp(0x9fe4ff, 4, 4.5, -3.5, 2.0, -1.2);
+    lamp(0xffe9d6, 4, 5, 2.4, 2.2, -3.2);
 
     // ---- portholes, decals, livery ----
-    const trim2 = mat(0xb9bfc8, false, 0.3, 0.6), glassM = new THREE.MeshStandardMaterial({ color: 0x0a1522, roughness: 0.05, metalness: 0.6, emissive: 0x050a12 });
-    const porthole = (psi: number, y: number, inside: boolean) => {
-      for (const out of inside ? [true, false] : [true]) {
-        const g = new THREE.Group(), r = out ? R + 0.02 : R - 0.085, s = out ? 1 : -1;
-        g.position.set(r * Math.cos(psi), y, r * Math.sin(psi)); g.rotation.y = -psi; this.root.add(g);
-        g.add(new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.045, 12, 40).rotateY(P / 2), trim2));
-        const gl = new THREE.Mesh(new THREE.CircleGeometry(0.29, 40).rotateY((s * P) / 2), glassM); gl.position.x = s * 0.005; g.add(gl);
-      }
+    const trim2 = mat(0xb9bfc8, false, 0.3, 0.6), sleeveM = new THREE.MeshStandardMaterial({ color: 0xb9bfc8, roughness: 0.4, metalness: 0.5, side: THREE.DoubleSide });
+    const paneM = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.03, metalness: 0, transparent: true, opacity: 0.07, depthWrite: false });
+    const porthole = (psi: number, y: number) => {
+      const at = (r: number) => { const g = new THREE.Group(); g.position.set(r * Math.cos(psi), y, r * Math.sin(psi)); g.rotation.y = -psi; this.root.add(g); return g; };
+      for (const r of [R + 0.02, R - 0.085]) at(r).add(new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.045, 12, 40).rotateY(P / 2), trim2));
+      const mid = at(R - 0.03);
+      mid.add(new THREE.Mesh(new THREE.CylinderGeometry(WIN_R + 0.005, WIN_R + 0.005, 0.16, 32, 1, true).rotateZ(P / 2), sleeveM));
+      mid.add(new THREE.Mesh(new THREE.CircleGeometry(WIN_R, 32).rotateY(P / 2), paneM));
     };
-    for (const psi of [0.34 * P, -0.34 * P, 0.68 * P, -0.68 * P]) porthole(psi, 1.45, false);
-    porthole(-0.3 * P, 1.65, true);
+    for (const w of WINDOWS) porthole(w.psi, w.y);
     const decal = (psi: number, w: number, h: number, y: number, map: THREE.Texture, r: number, inside = false) => {
       const g = new THREE.CylinderGeometry(r, r, h, 28, 1, true, P / 2 - psi - w / (2 * r), w / r);
       if (inside) { const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setX(i, 1 - uv.getX(i)); }
@@ -94,22 +138,30 @@ export class Hab {
       mesh(rbox(d, o.h, o.w, 0.07), mat(o.color, o.glow), 0, y0f + o.h / 2, 0, g);
       if (o.accent !== null && o.h >= 0.9) mesh(rbox(d + 0.012, 0.07, o.w + 0.012, 0.03), mat(o.accent ?? NASA.blue), 0, y0f + o.h * 0.72, 0, g);
       if (o.badge) { const b = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.3), new THREE.MeshBasicMaterial({ map: ball, transparent: true })); b.position.set(-d / 2 - 0.012, y0f + o.h * 0.4, 0); b.rotation.y = -P / 2; g.add(b); }
-      if (o.text) { const l = label(o.text); l.position.set(-d / 2 - 0.02, y0f + o.h + 0.22, 0); l.rotation.y = -P / 2; g.add(l); }
+      if (o.text) { const l = label(o.text); l.position.set(-d / 2 - 0.014, y0f + (o.h >= 1.2 ? o.h - 0.12 : o.h * 0.5), 0); l.rotation.y = -P / 2; g.add(l); }
+      // contact shadow on the floor in front of and under the unit
+      if (y0f < 0.4 && (o.r ?? 4.9) > 4.5) { const ao = aoBlob(d + 0.6, o.w + 0.7); ao.position.set(-0.35, 0.035, 0); g.add(ao); }
       return g;
     };
     const rack = 0xe9edf1;
     fit(-0.48 * P, { w: 1.1, h: 1.9, color: rack, text: 'OXYGENATOR', badge: true }); fit(-0.62 * P, { w: 1.1, h: 1.9, color: rack, text: 'ATMOS. REGULATOR', badge: true });
-    fit(-0.76 * P, { w: 1.1, h: 1.9, color: rack, text: 'WATER RECLAIMER', badge: true }); fit(-0.9 * P, { w: 2.0, h: 0.9, color: NASA.graphite, text: 'COMMS / OPS', accent: NASA.red });
+    fit(-0.76 * P, { w: 1.1, h: 1.9, color: rack, text: 'WATER RECLAIMER', badge: true }); const ops = fit(-0.9 * P, { w: 2.0, h: 0.9, color: NASA.graphite, text: 'COMMS / OPS', accent: NASA.red });
+    const scr = (lines: string[]) => { const c = document.createElement('canvas'); c.width = 256; c.height = 160; const g = c.getContext('2d')!; g.fillStyle = '#04141c'; g.fillRect(0, 0, 256, 160); g.fillStyle = '#4fd8ff'; g.font = '13px monospace'; lines.forEach((t, i) => g.fillText(t, 8, 22 + i * 17)); g.strokeStyle = 'rgba(79,216,255,.5)'; g.strokeRect(2, 2, 252, 156); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; };
+    for (const [z, lines] of [[-0.62, ['EARTH LINK  X-BAND', 'DSN  GOLDSTONE', 'LIGHT TIME  1.28 S', 'TLM  NOMINAL']], [0, ['CAPCOM LOOP', 'FLIGHT  GO', 'SURGEON  GO', 'METOP  GO']], [0.62, ['SPACE WX', 'KP  --', 'FLARE  --', 'DOSE  --']]] as const) {
+      const sc = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.31), new THREE.MeshBasicMaterial({ map: scr([...lines]) })); sc.position.set(-0.05, 1.1, z); sc.rotation.set(0, -P / 2, 0); sc.rotation.x = 0; ops.add(sc);
+      const bezel = mesh(rbox(0.04, 0.35, 0.54, 0.015), mat(0x20262e), 0.0, 1.1, z, ops); bezel.position.x = 0.0;
+    }
+    mesh(rbox(0.3, 0.025, 0.55, 0.01), mat(0x2a3038), -0.22, 0.915, 0, ops);
+    mesh(new THREE.TorusGeometry(0.11, 0.015, 8, 20, P), mat(0x20262e), -0.25, 0.98, 0.8, ops);
     fit(-0.3 * P, { w: 2.0, h: 0.95, color: 0xdfe3e8, text: 'GALLEY' }); fit(0.9 * P, { w: 1.4, h: 1.4, color: 0xf6f7f9, text: 'MEDICAL', accent: NASA.red });
     for (const th of [0.28 * P, 0.5 * P, 0.72 * P]) {
       fit(th, { w: 2.0, h: 0.5, y: 0.25, d: 0.95, color: 0xc4ceda, accent: null }); fit(th, { w: 2.0, h: 0.5, y: 1.3, d: 0.95, color: 0xc4ceda, accent: null });
-      fit(th, { w: 2.0, h: 1.9, d: 0.04, r: 4.35, color: 0x2c5aa0, accent: null });
+      fit(th, { w: 2.0, h: 1.9, d: 0.04, r: 4.35, color: 0x2c5aa0, accent: null, text: th === 0.5 * P ? 'CREW QUARTERS' : undefined });
     }
-    fit(0.5 * P, { w: 1.0, h: 0.05, y: 2.3, d: 0.1, color: 0x4a5668, text: 'CREW QUARTERS  x5', accent: null });
     // suit rack (five suits) beside Airlock 1
     const rackTh = -0.13 * P, rg = fit(rackTh, { w: 2.3, h: 2.0, d: 0.15, r: 5.2, color: 0x59626d, text: 'EVA SUITS', accent: NASA.red });
     for (let i = 0; i < 5; i++) {
-      const s = new THREE.Group(); s.position.set(-0.3, 0, (i - 2) * 0.44); rg.add(s);
+      const s = new THREE.Group(); s.position.set(-0.3, 0, (i - 2) * 0.44); rg.add(s); this.suitMeshes.push(s);
       mesh(new THREE.CapsuleGeometry(0.17, 0.8, 8, 16), mat(0xf6f6f6), 0, 1.0, 0, s); mesh(new THREE.SphereGeometry(0.16, 20, 16), mat(0xe6edf5), 0, 1.65, 0, s);
       const v = mesh(new THREE.SphereGeometry(0.12, 16, 12), mat(0x1a2330, false, 0.1, 0.7), -0.09, 1.66, 0, s); v.scale.set(0.6, 0.85, 1);
       mesh(rbox(0.05, 0.12, 0.22, 0.02), mat(NASA.red), -0.16, 1.2, 0, s);
@@ -150,9 +202,17 @@ export class Hab {
             l.cyc = l.p > 50 ? 0 : LOCK_P; return l.cyc === 0 ? 'PUMPING AIR BACK TO THE HAB' : 'REPRESSURISING FROM HAB SUPPLY';
           } });
     }
+    this.items.push({ x: 4.0 * Math.cos(-0.9 * P), z: 4.0 * Math.sin(-0.9 * P), reach: 1.7, text: () => '[E] OPEN COMMS TERMINAL', run: () => { this.onComms?.(); return ''; } });
     const rx = 5.0 * Math.cos(rackTh), rz = 5.0 * Math.sin(rackTh);
-    this.items.push({ x: rx * 0.85, z: rz * 0.85, reach: 1.9, text: () => (this.suitOn ? '[E] DOFF EVA SUIT AND RECHARGE' : '[E] DON EVA SUIT'),
-      run: () => { if (this.exposed) return 'RETURN TO THE HAB FIRST'; this.suitOn = !this.suitOn; if (!this.suitOn) this.suitHours = EVA_H; return this.suitOn ? 'EVA SUIT SEALED' : 'EVA SUIT STOWED, CONSUMABLES RECHARGED'; } });
+    this.items.push({ x: rx * 0.85, z: rz * 0.85, reach: 1.9,
+      text: () => (this.busy ? '' : this.suitOn ? '[E] DOFF EVA SUIT AND RECHARGE' : '[E] DON EVA SUIT (TAKES ABOUT 30 S)'),
+      run: () => {
+        if (this.busy) return 'SUIT-UP IN PROGRESS';
+        if (this.exposed) return 'RETURN TO THE HAB FIRST';
+        this.suitT = 0; this.suitStage = -1;
+        if (!this.suitOn) { this.suitTaken = this.suitMeshes.find((m) => m.visible) ?? null; this.suitState = 'donning'; return ''; }
+        this.suitState = 'doffing'; return '';
+      } });
   }
 
   private makeLock(name: string, ang: number): Lock {
@@ -184,7 +244,7 @@ export class Hab {
       return { open: false, k: 0, pivot, lamp: lampM, dir };
     };
     const inner = mkDoor(R, 1), outer = mkDoor(R + TL, -1);
-    const lbl = label(name, 1.0); lbl.position.set(R + TL / 2, 2.45, 0); lbl.rotation.y = 0; g.add(lbl);
+    const lbl = label(name, 0.5); lbl.position.set(R + TL / 2, 1.75, 0.795); lbl.rotation.y = Math.PI; g.add(lbl);
     return { name, ang, ca: Math.cos(ang), sa: Math.sin(ang), p: LOCK_P, cyc: null, inner, outer };
   }
 
@@ -209,6 +269,14 @@ export class Hab {
   press() { if (this.best) { this.toast = this.best.run(); this.toastT = 2.8; } }
 
   update(dt: number, dtSim: number, p: THREE.Vector3, sim: Sim) {
+    this.clock += dt;
+    // power-aware lighting: slow mains wander, brown-out when the battery is low, red emergency lighting when the bus is dead
+    const batt = sim.batteryKwh / 600, live = batt > 0 || sim.genKw >= 12, target = !live ? 0.1 : batt < 0.12 && sim.genKw < 12 ? 0.55 + batt * 3 : 1;
+    this.powerK += (target - this.powerK) * Math.min(1, dt * 2.5);
+    const wander = 1 + 0.012 * Math.sin(this.clock * 3.1) + 0.008 * Math.sin(this.clock * 7.3 + 1);
+    for (const { l, base, color } of this.lights) { l.intensity = base * this.powerK * wander; l.color.setHex(this.powerK < 0.3 ? 0xff3b2a : color); }
+    for (const { m, base } of this.glows) m.emissiveIntensity = base * Math.min(1, this.powerK * 1.1);
+    this.stepSuit(dt, sim);
     for (const l of this.locks) {
       for (const d of [l.inner, l.outer]) {
         d.k = Math.min(1, Math.max(0, d.k + (d.open ? 1 : -1) * dt * 1.2)); d.pivot.rotation.y = d.dir * d.k * 1.7;
@@ -232,10 +300,23 @@ export class Hab {
     this.best = best; this.prompt = best ? best.text() : '';
   }
 
+  private stepSuit(dt: number, sim: Sim) {
+    if (!this.busy) { this.taskLabel = ''; this.taskProgress = 0; return; }
+    const don = this.suitState === 'donning', total = don ? DON_S : DOFF_S, stages = don ? DON_STAGES : DOFF_STAGES;
+    this.suitT += dt; const f = Math.min(1, this.suitT / total), st = Math.min(stages.length - 1, Math.floor(f * stages.length));
+    this.taskProgress = f; this.taskLabel = `${don ? 'SUITING UP' : 'SUIT DOFF'} · ${stages[st]}`;
+    if (st !== this.suitStage) { this.suitStage = st; if (st === 0 && don && this.suitTaken) this.suitTaken.visible = false; }
+    if (f >= 1) {
+      if (don) { this.suitState = 'on'; this.suitHours = EVA_H; sim.spend(0.05, 0.05); this.toast = 'EVA SUIT SEALED · 4.3 PSI · O2 ' + EVA_H + ' H'; }
+      else { this.suitState = 'rack'; this.suitHours = EVA_H; if (this.suitTaken) this.suitTaken.visible = true; this.suitTaken = null; this.toast = 'EVA SUIT STOWED, CONSUMABLES RECHARGED'; }
+      this.toastT = 3.2; this.taskLabel = ''; this.taskProgress = 0;
+    }
+  }
+
   status(): [string, string, string][] {
     const rows: [string, string, string][] = [
       ['LOCATION', this.where, this.exposed ? 'bad' : 'ok'],
-      ['EVA SUIT', this.suitOn ? `SEALED · ${this.suitHours.toFixed(1)} h O2` : 'ON RACK', this.suitOn && this.suitHours < 1.5 ? 'bad' : 'ok'],
+      ['EVA SUIT', this.suitOn ? `SEALED · ${this.suitHours.toFixed(1)} h O2` : this.suitState === 'donning' ? 'SUITING UP' : this.suitState === 'doffing' ? 'DOFFING' : 'ON RACK', this.suitOn && this.suitHours < 1.5 ? 'bad' : this.busy ? 'warn' : 'ok'],
     ];
     for (const l of this.locks) {
       const st = l.cyc !== null ? (l.cyc === 0 ? 'DEPRESSURISING' : 'REPRESSURISING') : l.inner.open ? 'INNER OPEN' : l.outer.open ? 'OUTER OPEN' : 'SEALED';

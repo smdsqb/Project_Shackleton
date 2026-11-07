@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import { heightAt, isSunlit, rand, loadTerrain } from './terrain';
+import { heightAt, isSunlit, rand, loadTerrain, getSite } from './terrain';
 import { buildExterior, propBlocked } from './exterior';
 import { bodyDir, loadEphemeris } from './ephemeris';
 import { Sim, SIM } from './sim';
-import { Hab } from './hab';
+import { Hab, WALL_H, CAP_H } from './hab';
+import { Comms, type Link } from './comms';
 
 const MISSION_DAY0 = 214, EYE = 1.7, G = 1.62;
 
@@ -20,7 +21,9 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 30000);
 camera.position.set(-1.5, heightAt(0, 0) + EYE, 0.5);
 scene.add(camera);
-scene.add(new THREE.AmbientLight(0x39485c, 0.35));
+const amb = new THREE.AmbientLight(0x39485c, 0.35); // earthshine and regolith bounce; dropped inside the hab so interior light is not flat
+scene.add(amb);
+let ambK = 0.35;
 const sun = new THREE.DirectionalLight(0xfff4e6, 3.2);
 sun.castShadow = true;
 sun.shadow.mapSize.set(4096, 4096);
@@ -89,6 +92,8 @@ function buildWorld() {
 
   const gy = heightAt(0, 0);
   hab = new Hab(scene, gy);
+  hab.onComms = openComms;
+  dishPos.set(0, gy + WALL_H + CAP_H + 0.9, 0);
   arrayPos.set(14, heightAt(14, 6) + 12, 6);
   buildExterior(scene, heightAt, arrayPos);
   camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE;
@@ -100,6 +105,32 @@ let hab: Hab | null = null;
 let simMs = Date.now();
 const startMs = simMs;
 let flare = 'NONE', sunLive = false;
+const earthDir = new THREE.Vector3(1, 0, 0); let earthEl = 0.07, earthVisible = true;
+const dishPos = new THREE.Vector3();
+
+function nextAos(): string {
+  const now = simMs;
+  for (let i = 1; i <= 1440; i++) { const e = bodyDir('earth', new Date(now + i * 1800000)); if (!e.live) return ''; if (e.el > 0.003) return ` NEXT ACQUISITION IN ABOUT ${Math.max(1, Math.round((i * 0.5)))} H (SIM TIME).`; }
+  return '';
+}
+function link(): Link {
+  if (!(sim.batteryKwh > 0 || sim.genKw >= SIM.loadKw)) return { up: false, reason: 'THE COMMS RACK HAS NO POWER.' };
+  if (!earthVisible) return { up: false, reason: (earthEl > 0.003 ? 'EARTH IS MASKED BY TERRAIN.' : 'EARTH IS BELOW THE LUNAR HORIZON.') + nextAos() };
+  return { up: true, reason: '' };
+}
+function telemetry() {
+  const o2Days = sim.o2Kg / (SIM.crew * SIM.o2KgPerCrewDay);
+  return {
+    missionDay: MISSION_DAY0 + Math.floor((simMs - startMs) / 86400000), simTime: new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
+    batteryPct: (sim.batteryKwh / SIM.batteryCapKwh) * 100, genKw: sim.genKw, loadKw: SIM.loadKw, sunlit: sim.sunlit, o2Kg: sim.o2Kg, o2Days, co2: sim.co2,
+    doseMsv: sim.doseMsv, doseRateMsvDay: SIM.surfaceDoseMsvPerDay * SIM.habShield * sim.radMult, flare, crew: SIM.crew,
+    location: hab?.where ?? '', suit: hab?.suitState ?? '', earthElDeg: earthEl * 57.2958,
+  };
+}
+const comms = new Comms({
+  telemetry, link, now: () => new Date(simMs), delayS: () => SIM.commsDelayS,
+  onClose: () => { renderer.domElement.requestPointerLock(); },
+});
 
 // ---------- controls ----------
 let yaw = -Math.PI / 2, pitch = 0, vy = 0, onGround = true, locked = false;
@@ -108,14 +139,17 @@ const intro = document.getElementById('intro')!, enter = document.getElementById
 enter.addEventListener('click', () => { renderer.domElement.requestPointerLock(); intro.classList.add('leaving'); });
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
-  if (!locked) { enter.textContent = 'RESUME'; intro.classList.remove('leaving'); }
+  if (!locked && !comms.isOpen) { enter.textContent = 'RESUME'; intro.classList.remove('leaving'); keys.clear(); }
 });
+renderer.domElement.addEventListener('click', () => { if (!locked && !comms.isOpen && intro.classList.contains('leaving')) renderer.domElement.requestPointerLock(); });
+function openComms() { keys.clear(); document.exitPointerLock(); comms.open(); }
 addEventListener('mousemove', (e) => { if (!locked) return; yaw -= e.movementX * 0.0022; pitch = Math.max(-1.5, Math.min(1.5, pitch - e.movementY * 0.0022)); });
 addEventListener('keydown', (e) => { keys.add(e.code); if (e.code === 'KeyE' && locked) hab?.press(); });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
 // ---------- HUD ----------
+const taskEl = document.getElementById('task')!, taskLbl = taskEl.querySelector('.lbl')!, taskBar = taskEl.querySelector('i') as HTMLElement, visorEl = document.getElementById('visor')!;
 const hud = document.getElementById('hud')!, promptEl = document.getElementById('prompt')!, toastEl = document.getElementById('toast')!;
 const cls = (v: boolean, bad = false) => (v ? (bad ? 'bad' : 'warn') : 'ok');
 const row = (k: string, v: string, c = 'ok') => `<div class="row"><span class="k">${k}</span><span class="${c}">${v}</span></div>`;
@@ -134,6 +168,7 @@ function drawHud(az: number, el: number) {
     row('CREW DOSE', `${sim.doseMsv.toFixed(3)} mSv`, cls(sim.radMult > 1)) +
     row('FLARES (3 D)', flare, cls(sim.radMult > 1)) +
     row('COMMS DELAY', `${SIM.commsDelayS.toFixed(2)} s one-way`) +
+    row('EARTH LINK', link().up ? `ACQUIRED · EL ${(earthEl * 57.2958).toFixed(1)}°` : 'LOS', link().up ? 'ok' : 'bad') +
     (hab ? hab.status().map(([k, v, c]) => row(k, v, c)).join('') : '');
 }
 
@@ -149,11 +184,16 @@ function frame() {
     hab.update(dt, dt * SIM.timeRate, camera.position, sim);
     promptEl.textContent = hab.prompt; promptEl.style.display = hab.prompt && locked ? 'block' : 'none';
     toastEl.textContent = hab.toast; toastEl.style.display = hab.toast ? 'block' : 'none';
+    taskEl.style.display = hab.busy ? 'block' : 'none';
+    if (hab.busy) { taskLbl.textContent = hab.taskLabel; taskBar.style.width = (hab.taskProgress * 100).toFixed(1) + '%'; }
+    visorEl.classList.toggle('on', hab.suitOn);
   }
   const date = new Date(simMs), s = bodyDir('sun', date), e = bodyDir('earth', date);
-  sunLive = s.live; sd.set(s.x, s.y, s.z);
+  sunLive = s.live; sd.set(s.x, s.y, s.z); earthDir.set(e.x, e.y, e.z); earthEl = e.el;
+  const inside = hab ? hab.inHab(camera.position.x, camera.position.z) : false;
+  ambK += ((inside ? 0.1 : 0.35) - ambK) * Math.min(1, dt * 3); amb.intensity = ambK;
 
-  if (locked) {
+  if (locked && !hab?.busy) {
     const speed = keys.has('ShiftLeft') ? 6 : 3;
     fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw)); rgt.set(Math.cos(yaw), 0, -Math.sin(yaw)); mv.set(0, 0, 0);
     if (keys.has('KeyW')) mv.add(fwd); if (keys.has('KeyS')) mv.sub(fwd);
@@ -176,7 +216,7 @@ function frame() {
   earth.position.copy(camera.position).add(new THREE.Vector3(e.x, e.y, e.z).multiplyScalar(3000));
 
   litT += dt; hudT += dt;
-  if (litT > 0.25) { litT = 0; sim.sunlit = isSunlit(arrayPos, sd); }
+  if (litT > 0.25) { litT = 0; sim.sunlit = isSunlit(arrayPos, sd); earthVisible = earthEl > 0.003 && isSunlit(dishPos, earthDir); }
   if (hudT > 0.25) { hudT = 0; drawHud(s.az, s.el); }
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
@@ -194,7 +234,7 @@ function log(text: string) {
   const dDem = log('LRO LOLA · TERRAIN MODEL');
   const dTer = log('BUILDING TERRAIN MESH');
   const pDem = loadTerrain().then((st) => dDem(st, st.startsWith('LOLA') ? 'ok' : 'warn'));
-  const pEph = loadEphemeris().then((ok) => dEph(ok ? 'LIVE' : 'FALLBACK', ok ? 'ok' : 'warn'));
+  const pEph = pDem.then(() => loadEphemeris(getSite())).then((ok) => dEph(ok ? 'LIVE' : 'FALLBACK', ok ? 'ok' : 'warn'));
   const pFl = fetch('/api/space-weather', { signal: AbortSignal.timeout(15000) }).then((r) => r.json()).then((d) => {
     if (d.error) throw new Error(d.error);
     flare = d.strongest ?? 'NONE'; sim.setFlareClass(d.strongest ?? null); dFl(flare === 'NONE' ? 'QUIET' : 'ACTIVE ' + flare, 'ok');
