@@ -10,7 +10,11 @@ A first-person, realism-focused 3D lunar outpost simulator set on the rim of Sha
 
 ## Known placeholders
 
-Terrain is procedural, the Sun position is an approximation, the Earth is a plain sphere, and simulation constants are rough. Real LRO terrain, a real ephemeris and tuned constants come next.
+Without a baked tile the terrain is procedural, the Earth is a plain sphere, and simulation constants are rough.
+
+## Real terrain (LRO LOLA)
+
+The sim loads `public/terrain/shackleton.{json,bin}` when present and falls back to procedural terrain otherwise. Bake a tile from a LOLA south-polar DEM (PDS Geosciences node) with `node scripts/bake-terrain.mjs` (run it with no arguments for usage; you need the raster size, m/px and the site's pixel from the product's .LBL). The tile is a 1024 px int16 crop (about 2 MB) centred on the Hab site; metre-scale craters and roughness are layered on top of the DEM.
 
 ## Deployment
 
@@ -18,4 +22,4 @@ Hosted on Vercel from the main branch. Set the NASA_API_KEY environment variable
 
 ## The Hab
 
-Modelled on the Hab from The Martian: a canvas drum and dome (~92 m2 floor), two airlocks with interlocked hatches, lab tables, oxygenator, atmospheric regulator and water reclaimer, quarters for a crew of five. Airlock timings and costs are design placeholders.
+A rigid, painted-aluminium surface habitat: radiused drum and dome (~92 m2 floor) with panel seams, a gold thermal-blanket skirt, portholes, curved-roof airlocks with interlocked hatches, racks for the oxygenator, atmospheric regulator and water reclaimer, and quarters for a crew of five. Interior is soft-edged and NASA-branded (blue band, plates, meatball). Outside: sintered pad, dish, solar array, tanks, batteries, radiator, flag. The meatball and worm are stylised canvas recreations; swap in official art from the NASA Brand Center before release. Airlock timings and costs are design placeholders.

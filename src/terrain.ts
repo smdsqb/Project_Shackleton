@@ -1,6 +1,7 @@
-// Procedural lunar terrain: seeded crater populations at several scales (bowl + raised rim), smooth gradient noise
-// for undulation, and true lunar curvature so the horizon sits where it would for a 1.7 m eye height.
-// Not yet real LRO/LOLA data (that source is not reachable from the build environment).
+// Lunar terrain. When a baked LRO/LOLA tile is present (public/terrain/shackleton.{json,bin}, produced by
+// scripts/bake-terrain.mjs) it supplies the real relief and only metre-scale craters/roughness are added on top;
+// otherwise it falls back to procedural craters + gradient noise. Both include true lunar curvature so the horizon
+// sits where it would for a 1.7 m eye height.
 const R_MOON = 1737400;
 const rnd = (i: number, j: number, s: number) => {
   let h = Math.imul(i, 374761393) ^ Math.imul(j, 668265263) ^ Math.imul(s, 2147483647);
@@ -18,9 +19,9 @@ const fbm = (x: number, z: number, o: number) => { let a = 1, f = 1, s = 0; for 
 
 // [cell size, max radius, probability]
 const LAYERS: [number, number, number][] = [[1400, 600, 0.6], [90, 40, 0.55], [35, 16, 0.7], [12, 5.5, 0.8], [5, 2, 0.8]];
-function craters(x: number, z: number) {
+function craters(x: number, z: number, from = 0) {
   let h = 0;
-  for (let L = 0; L < LAYERS.length; L++) {
+  for (let L = from; L < LAYERS.length; L++) {
     const [cell, rMax, prob] = LAYERS[L];
     const ci = Math.floor(x / cell), cj = Math.floor(z / cell);
     for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
@@ -37,16 +38,30 @@ function craters(x: number, z: number) {
   return h;
 }
 
+type Dem = { n: number; res: number; half: number; data: Int16Array; scale: number };
+let dem: Dem | null = null;
+function demAt(x: number, z: number): number | null {
+  if (!dem) return null;
+  const { n, res, half, data, scale } = dem;
+  const fx = (x + half) / res, fz = (z + half) / res;
+  if (fx < 0 || fz < 0 || fx >= n - 1 || fz >= n - 1) return null;
+  const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j;
+  const a = data[j * n + i], b = data[j * n + i + 1], c = data[(j + 1) * n + i], d = data[(j + 1) * n + i + 1];
+  return (a + u * (b - a) + v * (c - a + u * (a - b - c + d))) * scale;
+}
+
 function rawHeight(x: number, z: number): number {
   const r = Math.hypot(x, z);
   const pad = Math.min(1, Math.max(0, (r - 25) / 45));
+  const dh = demAt(x, z);
+  if (dh !== null) return dh + (fbm(x * 0.05, z * 0.05, 3) * 0.5 + craters(x, z, 2)) * pad - (x * x + z * z) / (2 * R_MOON);
   const main = Math.hypot(x + 300, z), MR = 240;
   const rim = (main < MR ? -35 * (1 - (main / MR) ** 2) : 0) + 16 * Math.exp(-(((main - MR) / 40) ** 2));
   const land = fbm(x * 0.006, z * 0.006, 4) * 9 + fbm(x * 0.05, z * 0.05, 3) * 0.5;
   return (rim + (land + craters(x, z)) * pad) - (x * x + z * z) / (2 * R_MOON);
 }
 
-const H0 = rawHeight(0, 0);
+let H0 = rawHeight(0, 0);
 /** Terrain with a level pad under the Hab (radius ~18 m, blending out to ~48 m). */
 export function heightAt(x: number, z: number): number {
   const t = Math.min(1, Math.max(0, (Math.hypot(x, z) - 18) / 30));
@@ -61,3 +76,22 @@ export function isSunlit(p: V3, sun: V3): boolean {
   return true;
 }
 export const rand = rnd;
+
+/** Load the baked LOLA tile if one is deployed. Returns a short status for the boot screen. */
+export async function loadTerrain(): Promise<string> {
+  try {
+    const m = await fetch('/terrain/shackleton.json', { signal: AbortSignal.timeout(10000) });
+    if (!m.ok) return 'PROCEDURAL';
+    const meta = await m.json();
+    const b = await fetch('/terrain/shackleton.bin', { signal: AbortSignal.timeout(60000) });
+    if (!b.ok) return 'PROCEDURAL';
+    const data = new Int16Array(await b.arrayBuffer());
+    if (!(meta.n > 2) || !(meta.res > 0) || !(meta.scale > 0) || data.length !== meta.n * meta.n) return 'PROCEDURAL';
+    setDem(data, meta.n, meta.res, meta.scale);
+    return `LOLA DEM \u00b7 ${meta.res} M/PX`;
+  } catch { return 'PROCEDURAL'; }
+}
+/** n x n grid, res metres per cell, centred on the site, heights in `scale` metre units relative to the site. */
+export function setDem(data: Int16Array, n: number, res: number, scale: number) {
+  dem = { n, res, half: (n * res) / 2, data, scale }; H0 = rawHeight(0, 0);
+}

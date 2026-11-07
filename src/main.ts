@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { heightAt, isSunlit, rand } from './terrain';
+import { heightAt, isSunlit, rand, loadTerrain } from './terrain';
+import { buildExterior, propBlocked } from './exterior';
 import { bodyDir, loadEphemeris } from './ephemeris';
 import { Sim, SIM } from './sim';
 import { Hab } from './hab';
@@ -86,14 +87,11 @@ function buildWorld() {
   }
   rocks.count = n; rocks.castShadow = rocks.receiveShadow = true; scene.add(rocks);
 
-  const metal = new THREE.MeshStandardMaterial({ color: 0xc9ced6, roughness: 0.55, metalness: 0.4 });
-  const panel = new THREE.MeshStandardMaterial({ color: 0x14224a, roughness: 0.3, metalness: 0.6 });
-  const add = (m: THREE.Mesh, x: number, y: number, z: number) => { m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; scene.add(m); return m; };
   const gy = heightAt(0, 0);
   hab = new Hab(scene, gy);
-  add(new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.3, 24, 8), metal), 14, heightAt(14, 6) + 11, 6);
-  add(new THREE.Mesh(new THREE.BoxGeometry(0.15, 10, 10), panel), 14, arrayPos.y + 5, 6);
-  add(new THREE.Mesh(new THREE.BoxGeometry(0.15, 10, 10), panel), 14, arrayPos.y - 5, 6);
+  arrayPos.set(14, heightAt(14, 6) + 12, 6);
+  buildExterior(scene, heightAt, arrayPos);
+  camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE;
 }
 
 // ---------- sim ----------
@@ -162,8 +160,9 @@ function frame() {
     if (keys.has('KeyD')) mv.add(rgt); if (keys.has('KeyA')) mv.sub(rgt);
     if (mv.lengthSq() > 0) mv.normalize().multiplyScalar(speed * dt);
     const nx = Math.max(-280, Math.min(280, camera.position.x + mv.x)), nz = Math.max(-280, Math.min(280, camera.position.z + mv.z));
-    if (!hab || !hab.blocked(nx, camera.position.z)) camera.position.x = nx;
-    if (!hab || !hab.blocked(camera.position.x, nz)) camera.position.z = nz;
+    const blk = (x: number, z: number) => (hab ? hab.blocked(x, z) : false) || propBlocked(x, z);
+    if (!blk(nx, camera.position.z)) camera.position.x = nx;
+    if (!blk(camera.position.x, nz)) camera.position.z = nz;
     if (keys.has('Space') && onGround && !(hab && hab.inHab(camera.position.x, camera.position.z))) { vy = 2.6; onGround = false; }
   }
   vy -= G * dt; camera.position.y += vy * dt;
@@ -192,12 +191,15 @@ function log(text: string) {
 (async () => {
   const dEph = log('JPL HORIZONS · SUN AND EARTH EPHEMERIS');
   const dFl = log('NASA CCMC DONKI · SOLAR FLARE ACTIVITY');
-  const dTer = log('GENERATING LUNAR TERRAIN');
+  const dDem = log('LRO LOLA · TERRAIN MODEL');
+  const dTer = log('BUILDING TERRAIN MESH');
+  const pDem = loadTerrain().then((st) => dDem(st, st.startsWith('LOLA') ? 'ok' : 'warn'));
   const pEph = loadEphemeris().then((ok) => dEph(ok ? 'LIVE' : 'FALLBACK', ok ? 'ok' : 'warn'));
   const pFl = fetch('/api/space-weather', { signal: AbortSignal.timeout(15000) }).then((r) => r.json()).then((d) => {
     if (d.error) throw new Error(d.error);
     flare = d.strongest ?? 'NONE'; sim.setFlareClass(d.strongest ?? null); dFl(flare === 'NONE' ? 'QUIET' : 'ACTIVE ' + flare, 'ok');
   }).catch(() => dFl('OFFLINE', 'warn'));
+  await pDem;
   await new Promise((r) => setTimeout(r, 60));
   buildWorld(); dTer('READY', 'ok');
   await Promise.all([pEph, pFl]);
