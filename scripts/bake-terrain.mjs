@@ -1,4 +1,3 @@
-
 // Bake the LOLA 5 m south-polar DEM into:
 //   public/terrain/shackleton.bin
 //   public/terrain/shackleton.json
