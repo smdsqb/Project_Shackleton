@@ -1,3 +1,4 @@
+
 // Bake the LOLA 5 m south-polar DEM into:
 //   public/terrain/shackleton.bin
 //   public/terrain/shackleton.json
@@ -595,11 +596,13 @@ try {
       d <= cr.r + 150;
       d += RES
     ) {
+      // FIX: cx and cy are the actual crater-centre coordinates.
+      // fit.cx and fit.cy do not exist on the craterFit return object.
       const c =
-        fit.cx + Math.cos(cr.t) * d / RES;
+        cx + Math.cos(cr.t) * d / RES;
 
       const r =
-        fit.cy + Math.sin(cr.t) * d / RES;
+        cy + Math.sin(cr.t) * d / RES;
 
       const value = h(c, r);
 
@@ -902,8 +905,8 @@ try {
   // --------------------------------------------------
 
   const craterVector = [
-    fit.cx - site.c,
-    fit.cy - site.r
+    cx - site.c,
+    cy - site.r
   ];
 
   const craterEast =
@@ -1095,12 +1098,15 @@ try {
     for (let y = 0; y < previewSize; y++) {
       raw[y * (previewSize + 1)] = 0;
 
-      pixels
-        .subarray(y * previewSize, (y + 1) * previewSize)
-        .copy(
-          raw,
-          y * (previewSize + 1) + 1
-        );
+      // FIX: Uint8Array has no .copy() method.
+      // Buffer.set() copies the row into the PNG scanline.
+      raw.set(
+        pixels.subarray(
+          y * previewSize,
+          (y + 1) * previewSize
+        ),
+        y * (previewSize + 1) + 1
+      );
     }
 
     const ihdr = Buffer.alloc(13);
