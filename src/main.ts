@@ -114,6 +114,7 @@ function nextAos(): string {
   return '';
 }
 function link(): Link {
+  if (SIM.commsAlwaysOn) return { up: true, reason: '' };
   if (!(sim.batteryKwh > 0 || sim.genKw >= SIM.loadKw)) return { up: false, reason: 'THE COMMS RACK HAS NO POWER.' };
   if (!earthVisible) return { up: false, reason: (earthEl > 0.003 ? 'EARTH IS MASKED BY TERRAIN.' : 'EARTH IS BELOW THE LUNAR HORIZON.') + nextAos() };
   return { up: true, reason: '' };
@@ -168,7 +169,8 @@ function drawHud(az: number, el: number) {
     row('CREW DOSE', `${sim.doseMsv.toFixed(3)} mSv`, cls(sim.radMult > 1)) +
     row('FLARES (3 D)', flare, cls(sim.radMult > 1)) +
     row('COMMS DELAY', `${SIM.commsDelayS.toFixed(2)} s one-way`) +
-    row('EARTH LINK', link().up ? `ACQUIRED · EL ${(earthEl * 57.2958).toFixed(1)}°` : 'LOS', link().up ? 'ok' : 'bad') +
+    row('EARTH LINK', SIM.commsAlwaysOn ? 'ONLINE · 24x7 TEST MODE' : link().up ? 'ACQUIRED' : 'LOS', link().up ? 'ok' : 'bad') +
+    row('EARTH IN VIEW', earthVisible ? `YES · EL ${(earthEl * 57.2958).toFixed(1)}°` : 'NO · LINE OF SIGHT BLOCKED', earthVisible ? 'ok' : 'warn') +
     (hab ? hab.status().map(([k, v, c]) => row(k, v, c)).join('') : '');
 }
 

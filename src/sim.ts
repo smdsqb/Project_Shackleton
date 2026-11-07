@@ -1,10 +1,11 @@
 // Draft 1 simulation core. Pure state + fixed maths, no rendering. Constants are rough engineering
 // placeholders, to be tightened against NASA reference values in later branches.
 export const SIM = {
-  crew: 4, arrayAreaM2: 100, arrayEff: 0.27, solarConstW: 1361,
+  crew: 5, arrayAreaM2: 100, arrayEff: 0.27, solarConstW: 1361,
   loadKw: 12, batteryCapKwh: 600, o2StartKg: 400, o2KgPerCrewDay: 0.84,
   co2BaseMmHg: 2.5, co2RiseMmHgPerH: 0.35, co2ScrubMmHgPerH: 1.5,
   timeRate: 60, surfaceDoseMsvPerDay: 1.3, habShield: 0.5, commsDelayS: 1.28,
+  commsAlwaysOn: true, // TEST MODE: Earth link stays up 24x7 (ignores Earth line of sight and power). Set false for the real rules.
 };
 
 export class Sim {
