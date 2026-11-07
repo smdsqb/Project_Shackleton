@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Project Shackleton</title>
 <style>
+
   :root { --bg:#05070a; --fg:#d7dde5; --amber:#ffb000; --cyan:#4fd8ff; --red:#ff4d4d; }
   html, body { margin:0; height:100%; background:var(--bg); overflow:hidden; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; color:var(--fg); }
   canvas { display:block; }
@@ -12,16 +13,33 @@
   #hud h1 { margin:0 0 6px; font-size:12px; letter-spacing:.2em; color:var(--amber); }
   #hud .row { display:flex; justify-content:space-between; gap:18px; }
   #hud .k { color:#7d8a99; } .ok { color:var(--cyan); } .warn { color:var(--amber); } .bad { color:var(--red); }
-  #msg { position:fixed; bottom:16px; left:16px; font-size:11px; color:#7d8a99; pointer-events:none; }
-  #start { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; background:rgba(5,7,10,.82); cursor:pointer; text-align:center; }
-  #start h1 { margin:0; letter-spacing:.35em; font-weight:500; font-size:28px; }
-  #start p { margin:0; color:#7d8a99; font-size:13px; } #start b { color:var(--amber); font-weight:500; }
+  #intro { position:fixed; inset:0; display:flex; align-items:flex-end; background:radial-gradient(ellipse at 70% 110%, #0d1a2b 0%, #05070a 60%); transition:opacity 1.1s ease; z-index:5; overflow:hidden; }
+  #intro.leaving { opacity:0; pointer-events:none; }
+  .stars { position:absolute; inset:-50%; background-image:radial-gradient(1px 1px at 20% 30%,#fff,transparent),radial-gradient(1px 1px at 70% 60%,#cfe8ff,transparent),radial-gradient(1.5px 1.5px at 40% 80%,#fff,transparent),radial-gradient(1px 1px at 85% 20%,#fff,transparent),radial-gradient(1px 1px at 10% 70%,#ffe9c4,transparent); background-size:420px 420px; opacity:.7; animation:drift 240s linear infinite; }
+  @keyframes drift { to { transform:translate3d(-420px,-210px,0); } }
+  .panel { position:relative; padding:0 6vw 7vh; max-width:640px; animation:rise 1.6s ease both; }
+  @keyframes rise { from { opacity:0; transform:translateY(18px); } }
+  .eyebrow { font-size:11px; letter-spacing:.32em; color:var(--cyan); margin-bottom:18px; }
+  .panel h1 { margin:0; font-weight:200; font-size:clamp(40px,8vw,104px); line-height:.98; letter-spacing:.1em; }
+  .coords { margin:18px 0 26px; padding-top:14px; border-top:1px solid var(--amber); width:max-content; font-size:12px; letter-spacing:.28em; color:var(--amber); }
+  #boot { list-style:none; margin:0 0 26px; padding:0; font-size:11px; letter-spacing:.14em; color:#7d8a99; }
+  #boot li { display:flex; justify-content:space-between; gap:30px; padding:3px 0; animation:rise .6s ease both; }
+  #boot li::after { content:attr(data-s); color:#7d8a99; } #boot li.ok::after { color:var(--cyan); } #boot li.warn::after { color:var(--amber); }
+  #enter { font:inherit; font-size:13px; letter-spacing:.3em; color:var(--fg); background:transparent; border:1px solid rgba(215,221,229,.5); padding:14px 30px; cursor:pointer; transition:all .25s; }
+  #enter:enabled:hover { background:var(--fg); color:var(--bg); } #enter:disabled { opacity:.4; cursor:default; }
+  .keys { margin-top:22px; font-size:10px; letter-spacing:.2em; color:#566; }
 </style>
 </head>
 <body>
 <div id="hud"></div>
-<div id="msg">WASD move · Shift sprint · Space jump · [ ] time rate · Esc release mouse</div>
-<div id="start"><h1>PROJECT SHACKLETON</h1><p>Lunar south pole outpost simulator</p><p><b>Click to enter</b></p></div>
+<div id="intro"><div class="stars"></div><div class="panel">
+<div class="eyebrow">NASA SPACE APPS 2026 &middot; LUNAR SOUTH POLE</div>
+<h1>PROJECT<br>SHACKLETON</h1>
+<div class="coords">89.9&deg;S &middot; RIM OF SHACKLETON CRATER</div>
+<ul id="boot"></ul>
+<button id="enter" disabled>INITIALISING</button>
+<div class="keys">W A S D &nbsp;move &nbsp;&middot;&nbsp; SHIFT &nbsp;sprint &nbsp;&middot;&nbsp; SPACE &nbsp;jump &nbsp;&middot;&nbsp; ESC &nbsp;pause</div>
+</div></div>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

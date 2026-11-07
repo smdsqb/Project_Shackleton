@@ -1,26 +1,56 @@
-// Draft 1: procedural, stylised terrain (one crater rim to the west of the outpost pad).
-// Next branch: replace with real LRO LOLA elevation data for Shackleton.
-const hash = (x: number, z: number) => { const s = Math.sin(x * 127.1 + z * 311.7) * 43758.5453; return s - Math.floor(s); };
-const vnoise = (x: number, z: number) => {
-  const xi = Math.floor(x), zi = Math.floor(z), xf = x - xi, zf = z - zi;
-  const u = xf * xf * (3 - 2 * xf), v = zf * zf * (3 - 2 * zf);
-  return hash(xi, zi) * (1 - u) * (1 - v) + hash(xi + 1, zi) * u * (1 - v) + hash(xi, zi + 1) * (1 - u) * v + hash(xi + 1, zi + 1) * u * v;
+// Procedural lunar terrain: seeded crater populations at several scales (bowl + raised rim), smooth gradient noise
+// for undulation, and true lunar curvature so the horizon sits where it would for a 1.7 m eye height.
+// Not yet real LRO/LOLA data (that source is not reachable from the build environment).
+const R_MOON = 1737400;
+const rnd = (i: number, j: number, s: number) => {
+  let h = Math.imul(i, 374761393) ^ Math.imul(j, 668265263) ^ Math.imul(s, 2147483647);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 };
-const fbm = (x: number, z: number) => { let a = 1, f = 1, s = 0; for (let i = 0; i < 5; i++) { s += a * (vnoise(x * f, z * f) - 0.5); a *= 0.5; f *= 2; } return s; };
+const fade = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
+const grad = (i: number, j: number, x: number, z: number) => { const a = rnd(i, j, 77) * 6.2831853; return Math.cos(a) * x + Math.sin(a) * z; };
+function perlin(x: number, z: number) {
+  const i = Math.floor(x), j = Math.floor(z), fx = x - i, fz = z - j, u = fade(fx), v = fade(fz);
+  const a = grad(i, j, fx, fz), b = grad(i + 1, j, fx - 1, fz), c = grad(i, j + 1, fx, fz - 1), d = grad(i + 1, j + 1, fx - 1, fz - 1);
+  return (a + u * (b - a) + v * (c - a + u * (a - b - c + d))) * 1.4;
+}
+const fbm = (x: number, z: number, o: number) => { let a = 1, f = 1, s = 0; for (let k = 0; k < o; k++) { s += a * perlin(x * f, z * f); a *= 0.5; f *= 2.03; } return s; };
+
+// [cell size, max radius, probability]
+const LAYERS: [number, number, number][] = [[1400, 600, 0.6], [90, 40, 0.55], [35, 16, 0.7], [12, 5.5, 0.8], [5, 2, 0.8]];
+function craters(x: number, z: number) {
+  let h = 0;
+  for (let L = 0; L < LAYERS.length; L++) {
+    const [cell, rMax, prob] = LAYERS[L];
+    const ci = Math.floor(x / cell), cj = Math.floor(z / cell);
+    for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
+      const i = ci + di, j = cj + dj;
+      if (rnd(i, j, L * 10) > prob) continue;
+      const px = (i + 0.2 + 0.6 * rnd(i, j, L * 10 + 1)) * cell, pz = (j + 0.2 + 0.6 * rnd(i, j, L * 10 + 2)) * cell;
+      const R = rMax * (0.35 + 0.65 * rnd(i, j, L * 10 + 3) ** 2);
+      const d = Math.hypot(x - px, z - pz);
+      if (d > R * 2.2) continue;
+      const depth = R * (0.08 + 0.12 * rnd(i, j, L * 10 + 4)), t = d / R;
+      h += (t < 1 ? -depth * (1 - t * t) : 0) + 0.3 * depth * Math.exp(-(((t - 1) / 0.28) ** 2));
+    }
+  }
+  return h;
+}
 
 export function heightAt(x: number, z: number): number {
-  const d = Math.hypot(x + 300, z), R = 240;
-  const bowl = d < R ? -35 * (1 - (d / R) ** 2) : 0;
-  const rim = 16 * Math.exp(-(((d - R) / 40) ** 2));
-  const pad = Math.min(1, Math.hypot(x, z) / 30);
-  return bowl + rim + fbm(x * 0.012, z * 0.012) * 14 * pad + fbm(x * 0.08, z * 0.08) * 1.2 * pad;
+  const r = Math.hypot(x, z);
+  const pad = Math.min(1, Math.max(0, (r - 25) / 45));
+  const main = Math.hypot(x + 300, z), MR = 240;
+  const rim = (main < MR ? -35 * (1 - (main / MR) ** 2) : 0) + 16 * Math.exp(-(((main - MR) / 40) ** 2));
+  const land = fbm(x * 0.006, z * 0.006, 4) * 9 + fbm(x * 0.05, z * 0.05, 3) * 0.5;
+  return (rim + (land + craters(x, z)) * pad) - (x * x + z * z) / (2 * R_MOON);
 }
 
 type V3 = { x: number; y: number; z: number };
-/** Marches a ray toward the Sun across the heightfield; true if nothing blocks it. */
 export function isSunlit(p: V3, sun: V3): boolean {
-  for (let t = 4; t < 850; t += 4) {
+  for (let t = 4; t < 1500; t += t < 200 ? 2 : 6) {
     if (heightAt(p.x + sun.x * t, p.z + sun.z * t) > p.y + sun.y * t) return false;
   }
   return true;
 }
+export const rand = rnd;
