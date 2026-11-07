@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Project Shackleton</title>
+<style>
+  :root { --bg:#05070a; --fg:#d7dde5; --amber:#ffb000; --cyan:#4fd8ff; --red:#ff4d4d; }
+  html, body { margin:0; height:100%; background:var(--bg); overflow:hidden; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; color:var(--fg); }
+  canvas { display:block; }
+  #hud { position:fixed; top:16px; left:16px; padding:12px 14px; min-width:250px; font-size:12px; line-height:1.7; background:rgba(5,7,10,.62); border:1px solid rgba(79,216,255,.25); border-radius:6px; pointer-events:none; }
+  #hud h1 { margin:0 0 6px; font-size:12px; letter-spacing:.2em; color:var(--amber); }
+  #hud .row { display:flex; justify-content:space-between; gap:18px; }
+  #hud .k { color:#7d8a99; } .ok { color:var(--cyan); } .warn { color:var(--amber); } .bad { color:var(--red); }
+  #msg { position:fixed; bottom:16px; left:16px; font-size:11px; color:#7d8a99; pointer-events:none; }
+  #start { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; background:rgba(5,7,10,.82); cursor:pointer; text-align:center; }
+  #start h1 { margin:0; letter-spacing:.35em; font-weight:500; font-size:28px; }
+  #start p { margin:0; color:#7d8a99; font-size:13px; } #start b { color:var(--amber); font-weight:500; }
+</style>
+</head>
+<body>
+<div id="hud"></div>
+<div id="msg">WASD move · Shift sprint · Space jump · [ ] time rate · Esc release mouse</div>
+<div id="start"><h1>PROJECT SHACKLETON</h1><p>Lunar south pole outpost simulator</p><p><b>Click to enter</b></p></div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>
