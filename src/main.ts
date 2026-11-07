@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { heightAt, isSunlit, rand } from './terrain';
 import { bodyDir, loadEphemeris } from './ephemeris';
 import { Sim, SIM } from './sim';
+import { Hab } from './hab';
 
 const MISSION_DAY0 = 214, EYE = 1.7, G = 1.62;
 
@@ -16,7 +17,7 @@ document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 30000);
-camera.position.set(0, heightAt(0, 20) + EYE, 20);
+camera.position.set(-1.5, heightAt(0, 0) + EYE, 0.5);
 scene.add(camera);
 scene.add(new THREE.AmbientLight(0x39485c, 0.35));
 const sun = new THREE.DirectionalLight(0xfff4e6, 3.2);
@@ -89,11 +90,7 @@ function buildWorld() {
   const panel = new THREE.MeshStandardMaterial({ color: 0x14224a, roughness: 0.3, metalness: 0.6 });
   const add = (m: THREE.Mesh, x: number, y: number, z: number) => { m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; scene.add(m); return m; };
   const gy = heightAt(0, 0);
-  for (const z of [-6, 6]) {
-    add(new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 12, 24), metal), 0, gy + 3.1, z).rotation.z = Math.PI / 2;
-    add(new THREE.Mesh(new THREE.SphereGeometry(3, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2), metal), 6, gy + 3.1, z).rotation.z = -Math.PI / 2;
-  }
-  add(new THREE.Mesh(new THREE.BoxGeometry(2.5, 2.5, 8), metal), 0, gy + 1.5, 0);
+  hab = new Hab(scene, gy);
   add(new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.3, 24, 8), metal), 14, heightAt(14, 6) + 11, 6);
   add(new THREE.Mesh(new THREE.BoxGeometry(0.15, 10, 10), panel), 14, arrayPos.y + 5, 6);
   add(new THREE.Mesh(new THREE.BoxGeometry(0.15, 10, 10), panel), 14, arrayPos.y - 5, 6);
@@ -101,12 +98,13 @@ function buildWorld() {
 
 // ---------- sim ----------
 const sim = new Sim();
+let hab: Hab | null = null;
 let simMs = Date.now();
 const startMs = simMs;
 let flare = 'NONE', sunLive = false;
 
 // ---------- controls ----------
-let yaw = 0, pitch = 0, vy = 0, onGround = true, locked = false;
+let yaw = -Math.PI / 2, pitch = 0, vy = 0, onGround = true, locked = false;
 const keys = new Set<string>();
 const intro = document.getElementById('intro')!, enter = document.getElementById('enter') as HTMLButtonElement;
 enter.addEventListener('click', () => { renderer.domElement.requestPointerLock(); intro.classList.add('leaving'); });
@@ -115,12 +113,12 @@ document.addEventListener('pointerlockchange', () => {
   if (!locked) { enter.textContent = 'RESUME'; intro.classList.remove('leaving'); }
 });
 addEventListener('mousemove', (e) => { if (!locked) return; yaw -= e.movementX * 0.0022; pitch = Math.max(-1.5, Math.min(1.5, pitch - e.movementY * 0.0022)); });
-addEventListener('keydown', (e) => keys.add(e.code));
+addEventListener('keydown', (e) => { keys.add(e.code); if (e.code === 'KeyE' && locked) hab?.press(); });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
 // ---------- HUD ----------
-const hud = document.getElementById('hud')!;
+const hud = document.getElementById('hud')!, promptEl = document.getElementById('prompt')!, toastEl = document.getElementById('toast')!;
 const cls = (v: boolean, bad = false) => (v ? (bad ? 'bad' : 'warn') : 'ok');
 const row = (k: string, v: string, c = 'ok') => `<div class="row"><span class="k">${k}</span><span class="${c}">${v}</span></div>`;
 function drawHud(az: number, el: number) {
@@ -137,7 +135,8 @@ function drawHud(az: number, el: number) {
     row('CO2', `${sim.co2.toFixed(2)} mmHg`, cls(sim.co2 > 3, sim.co2 > 6)) +
     row('CREW DOSE', `${sim.doseMsv.toFixed(3)} mSv`, cls(sim.radMult > 1)) +
     row('FLARES (3 D)', flare, cls(sim.radMult > 1)) +
-    row('COMMS DELAY', `${SIM.commsDelayS.toFixed(2)} s one-way`);
+    row('COMMS DELAY', `${SIM.commsDelayS.toFixed(2)} s one-way`) +
+    (hab ? hab.status().map(([k, v, c]) => row(k, v, c)).join('') : '');
 }
 
 // ---------- loop ----------
@@ -148,6 +147,11 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   simMs += dt * SIM.timeRate * 1000;
   sim.step(dt * SIM.timeRate);
+  if (hab) {
+    hab.update(dt, dt * SIM.timeRate, camera.position, sim);
+    promptEl.textContent = hab.prompt; promptEl.style.display = hab.prompt && locked ? 'block' : 'none';
+    toastEl.textContent = hab.toast; toastEl.style.display = hab.toast ? 'block' : 'none';
+  }
   const date = new Date(simMs), s = bodyDir('sun', date), e = bodyDir('earth', date);
   sunLive = s.live; sd.set(s.x, s.y, s.z);
 
@@ -157,9 +161,10 @@ function frame() {
     if (keys.has('KeyW')) mv.add(fwd); if (keys.has('KeyS')) mv.sub(fwd);
     if (keys.has('KeyD')) mv.add(rgt); if (keys.has('KeyA')) mv.sub(rgt);
     if (mv.lengthSq() > 0) mv.normalize().multiplyScalar(speed * dt);
-    camera.position.x = Math.max(-280, Math.min(280, camera.position.x + mv.x));
-    camera.position.z = Math.max(-280, Math.min(280, camera.position.z + mv.z));
-    if (keys.has('Space') && onGround) { vy = 2.6; onGround = false; }
+    const nx = Math.max(-280, Math.min(280, camera.position.x + mv.x)), nz = Math.max(-280, Math.min(280, camera.position.z + mv.z));
+    if (!hab || !hab.blocked(nx, camera.position.z)) camera.position.x = nx;
+    if (!hab || !hab.blocked(camera.position.x, nz)) camera.position.z = nz;
+    if (keys.has('Space') && onGround && !(hab && hab.inHab(camera.position.x, camera.position.z))) { vy = 2.6; onGround = false; }
   }
   vy -= G * dt; camera.position.y += vy * dt;
   const floor = heightAt(camera.position.x, camera.position.z) + EYE;
@@ -186,7 +191,7 @@ function log(text: string) {
 }
 (async () => {
   const dEph = log('JPL HORIZONS · SUN AND EARTH EPHEMERIS');
-  const dFl = log('NASA DONKI · SOLAR FLARE ACTIVITY');
+  const dFl = log('NASA CCMC DONKI · SOLAR FLARE ACTIVITY');
   const dTer = log('GENERATING LUNAR TERRAIN');
   const pEph = loadEphemeris().then((ok) => dEph(ok ? 'LIVE' : 'FALLBACK', ok ? 'ok' : 'warn'));
   const pFl = fetch('/api/space-weather', { signal: AbortSignal.timeout(15000) }).then((r) => r.json()).then((d) => {

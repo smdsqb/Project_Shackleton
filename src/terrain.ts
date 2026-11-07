@@ -37,13 +37,20 @@ function craters(x: number, z: number) {
   return h;
 }
 
-export function heightAt(x: number, z: number): number {
+function rawHeight(x: number, z: number): number {
   const r = Math.hypot(x, z);
   const pad = Math.min(1, Math.max(0, (r - 25) / 45));
   const main = Math.hypot(x + 300, z), MR = 240;
   const rim = (main < MR ? -35 * (1 - (main / MR) ** 2) : 0) + 16 * Math.exp(-(((main - MR) / 40) ** 2));
   const land = fbm(x * 0.006, z * 0.006, 4) * 9 + fbm(x * 0.05, z * 0.05, 3) * 0.5;
   return (rim + (land + craters(x, z)) * pad) - (x * x + z * z) / (2 * R_MOON);
+}
+
+const H0 = rawHeight(0, 0);
+/** Terrain with a level pad under the Hab (radius ~18 m, blending out to ~48 m). */
+export function heightAt(x: number, z: number): number {
+  const t = Math.min(1, Math.max(0, (Math.hypot(x, z) - 18) / 30));
+  return H0 + (rawHeight(x, z) - H0) * t * t * (3 - 2 * t);
 }
 
 type V3 = { x: number; y: number; z: number };

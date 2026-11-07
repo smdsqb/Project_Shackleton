@@ -28,6 +28,11 @@ export class Sim {
     this.doseMsv += (SIM.surfaceDoseMsvPerDay / 24) * h * SIM.habShield * this.radMult;
   }
 
+  spend(o2Kg: number, kWh: number) {
+    this.o2Kg = Math.max(0, this.o2Kg - o2Kg);
+    this.batteryKwh = Math.max(0, this.batteryKwh - kWh);
+  }
+
   /** Placeholder mapping from the strongest recent flare class to a dose multiplier. */
   setFlareClass(c: string | null) {
     const k = c?.[0]?.toUpperCase();
