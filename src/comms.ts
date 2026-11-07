@@ -37,7 +37,7 @@ NEWS               world headlines from the wires
 POLITICS           political headlines
 anything else      talk to CAPCOM
 
-The link has real light-time delay. Replies take a few seconds. No Earth in the sky or no power means no link.`;
+The link has real light-time delay. Replies take a few seconds. Outside test mode, no Earth in the sky or no power means no link.`;
 
 export class Comms {
   isOpen = false;

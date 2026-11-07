@@ -3,12 +3,14 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import type { Sim } from './sim';
 import { NASA, panelTexture, tileTexture, crinkleTexture, meatball, worm, plateTexture, flagTexture } from './livery';
 
-// The Hab: a rigid, painted-aluminium surface habitat (drum + dome, ~92 m2 of floor) with a thermal-blanket skirt,
+// The Hab: a rigid, painted-aluminium surface habitat (drum + dome, ~155 m2 of floor) with a thermal-blanket skirt,
 // two airlocks with interlocked hatches, lab racks, oxygenator, atmospheric regulator and water reclaimer, and
 // quarters for a crew of five. Footprint and fittings follow the original layout; airlock timings and costs are
 // design placeholders. Every edge is radiused, every surface carries NASA livery.
-export const HAB_R = 5.41, WALL_H = 2.2, CAP_H = 1.4;
-const TL = 2.2, R_IN = 4.4, PR = 0.3, LOCK_P = 101.3, EVA_H = 8, CYCLE_S = 14;
+const K = 1.3; // footprint scale over the original 5.41 m drum: about 92 m2 of floor becomes about 155 m2
+export const HAB_R = 5.41 * K, WALL_H = 2.2, CAP_H = 1.4 * K;
+const DR = HAB_R - 5.41, GZ = 1.9 * K; // DR: how far the wall-mounted fittings move outwards
+const TL = 2.2, R_IN = 4.4 + DR, PR = 0.3, LOCK_P = 101.3, EVA_H = 8, CYCLE_S = 14;
 const DON_S = 30, DOFF_S = 14; // seconds to get into / out of the suit
 const DON_STAGES = ['TAKING SUIT OFF THE RACK', 'LCVG AND COMMS CAP ON', 'HARD UPPER TORSO AND BOOTS', 'GLOVES AND HELMET RING LATCHED', 'O2 AND WATER UMBILICAL CONNECTED', 'LEAK CHECK AT 4.3 PSI', 'PURGING SUIT WITH PURE O2'];
 const DOFF_STAGES = ['VENTING SUIT', 'HELMET AND GLOVES OFF', 'RACKING SUIT, RECHARGING O2'];
@@ -68,7 +70,7 @@ export class Hab {
     };
 
     // ---- shell: painted panels outside, soft lining inside, gold MLI skirt, blue interior band ----
-    const gap = 0.15, arc = P - 2 * gap, starts = [P / 2 + gap, (3 * P) / 2 + gap];
+    const gap = Math.asin(0.8 / R), arc = P - 2 * gap, starts = [P / 2 + gap, (3 * P) / 2 + gap];
     const shellM = new THREE.MeshStandardMaterial({ map: panelTexture('#f2f4f6', '#a9b1ba', 13, 2), roughness: 0.42, metalness: 0.2 });
     const liningM = new THREE.MeshStandardMaterial({ map: panelTexture('#e9edf0', '#c5cbd2', 13, 2), roughness: 0.75, metalness: 0.03, side: THREE.BackSide });
     const domeM = new THREE.MeshStandardMaterial({ map: panelTexture('#f2f4f6', '#a9b1ba', 28, 3), roughness: 0.42, metalness: 0.2 });
@@ -96,16 +98,16 @@ export class Hab {
     // floor (tiled composite decking) and the soft ceiling light ring
     mesh(new THREE.CircleGeometry(R - 0.06, 64).rotateX(-P / 2), new THREE.MeshStandardMaterial({ map: tileTexture('#a3a9b2', '#7d848e', 12), roughness: 0.8 }), 0, 0.03, 0);
     const glowM = (c: number, k = 1.1) => { const m = new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: k, roughness: 0.4 }); this.glows.push({ m, base: k }); return m; };
-    mesh(new THREE.TorusGeometry(3, 0.05, 12, 64).rotateX(P / 2), glowM(0xe6eeff, 0.9), 0, 3.28, 0);
-    mesh(new THREE.TorusGeometry(1.2, 0.04, 12, 48).rotateX(P / 2), glowM(0xffe2bd, 0.6), 0, 3.42, 0);
+    mesh(new THREE.TorusGeometry(3 * K, 0.05, 12, 64).rotateX(P / 2), glowM(0xe6eeff, 0.9), 0, 3.5, 0);
+    mesh(new THREE.TorusGeometry(1.2 * K, 0.04, 12, 48).rotateX(P / 2), glowM(0xffe2bd, 0.6), 0, 3.75, 0);
     // lighting plan: cool general light, cooler task light over the lab, warm light at the galley and bunks, a cyan wash at the comms desk
     const lamp = (c: number, i: number, dist: number, x: number, y: number, z: number) => { const l = new THREE.PointLight(c, i, dist, 2); l.position.set(x, y, z); this.root.add(l); this.lights.push({ l, base: i, color: c }); };
-    lamp(0xe4ecff, 15, 11, 0, 3.0, 0);
-    for (const x of [-2, 0, 2]) lamp(0xd2e4ff, 6, 5, x, 2.5, -1.6);
-    lamp(0xffd6a6, 9, 6, 0, 2.5, 1.9);
-    lamp(0xffcf9a, 5, 5, 0, 2.3, 3.6);
-    lamp(0x9fe4ff, 4, 4.5, -3.5, 2.0, -1.2);
-    lamp(0xffe9d6, 4, 5, 2.4, 2.2, -3.2);
+    lamp(0xe4ecff, 22, 15, 0, 3.4, 0);
+    for (const x of [-2, 0, 2]) lamp(0xd2e4ff, 8, 6, x * K, 2.5, -1.6 * K);
+    lamp(0xffd6a6, 11, 7, 0, 2.5, GZ);
+    lamp(0xffcf9a, 6, 6, 0, 2.3, 3.6 * K);
+    lamp(0x9fe4ff, 5, 5.5, -3.5 * K, 2.0, -1.2 * K);
+    lamp(0xffe9d6, 5, 6, 2.4 * K, 2.2, -3.2 * K);
 
     // ---- portholes, decals, livery ----
     const trim2 = mat(0xb9bfc8, false, 0.3, 0.6), sleeveM = new THREE.MeshStandardMaterial({ color: 0xb9bfc8, roughness: 0.4, metalness: 0.5, side: THREE.DoubleSide });
@@ -133,7 +135,7 @@ export class Hab {
 
     // ---- wall-mounted fittings, set around the inside of the drum by angle ----
     const fit = (th: number, o: { w: number; h: number; d?: number; y?: number; color: number; text?: string; glow?: boolean; r?: number; accent?: number | null; badge?: boolean }) => {
-      const g = new THREE.Group(), r = o.r ?? 4.9, d = o.d ?? 0.8, y0f = o.y ?? 0;
+      const g = new THREE.Group(), r = (o.r ?? 4.9) + DR, d = o.d ?? 0.8, y0f = o.y ?? 0;
       g.position.set(r * Math.cos(th), 0, r * Math.sin(th)); g.rotation.y = -th; this.root.add(g);
       mesh(rbox(d, o.h, o.w, 0.07), mat(o.color, o.glow), 0, y0f + o.h / 2, 0, g);
       if (o.accent !== null && o.h >= 0.9) mesh(rbox(d + 0.012, 0.07, o.w + 0.012, 0.03), mat(o.accent ?? NASA.blue), 0, y0f + o.h * 0.72, 0, g);
@@ -167,20 +169,21 @@ export class Hab {
       mesh(rbox(0.05, 0.12, 0.22, 0.02), mat(NASA.red), -0.16, 1.2, 0, s);
     }
     // centre of the floor: three lab tables and the galley table with five stools
-    for (const x of [-2, 0, 2]) {
-      mesh(rbox(1.6, 0.06, 0.8, 0.03), mat(0xeef1f4, false, 0.35), x, 0.9, -1.6); mesh(rbox(0.2, 0.87, 0.6, 0.05), mat(0x7a838f), x, 0.45, -1.6);
-      const m = mesh(rbox(0.45, 0.3, 0.04, 0.02), mat(0x6fd3ff, true), x, 1.1, -1.8); m.rotation.x = -0.25;
-      this.circles.push({ x, z: -1.6, r: 0.75 });
+    for (const x0 of [-2, 0, 2]) {
+      const x = x0 * K, zt = -1.6 * K;
+      mesh(rbox(1.6, 0.06, 0.8, 0.03), mat(0xeef1f4, false, 0.35), x, 0.9, zt); mesh(rbox(0.2, 0.87, 0.6, 0.05), mat(0x7a838f), x, 0.45, zt);
+      const m = mesh(rbox(0.45, 0.3, 0.04, 0.02), mat(0x6fd3ff, true), x, 1.1, zt - 0.2); m.rotation.x = -0.25;
+      this.circles.push({ x, z: zt, r: 0.75 });
     }
-    mesh(new THREE.CylinderGeometry(0.85, 0.85, 0.05, 48), mat(0xeef1f4, false, 0.35), 0, 0.75, 1.9);
-    mesh(new THREE.TorusGeometry(0.85, 0.025, 10, 48).rotateX(P / 2), mat(NASA.blue), 0, 0.75, 1.9);
-    mesh(new THREE.CylinderGeometry(0.1, 0.2, 0.72, 16), mat(0x7a838f), 0, 0.38, 1.9);
+    mesh(new THREE.CylinderGeometry(0.85, 0.85, 0.05, 48), mat(0xeef1f4, false, 0.35), 0, 0.75, GZ);
+    mesh(new THREE.TorusGeometry(0.85, 0.025, 10, 48).rotateX(P / 2), mat(NASA.blue), 0, 0.75, GZ);
+    mesh(new THREE.CylinderGeometry(0.1, 0.2, 0.72, 16), mat(0x7a838f), 0, 0.38, GZ);
     for (let i = 0; i < 5; i++) {
-      const a = (i / 5) * 2 * P, sx = 1.15 * Math.cos(a), sz = 1.9 + 1.15 * Math.sin(a);
+      const a = (i / 5) * 2 * P, sx = 1.15 * Math.cos(a), sz = GZ + 1.15 * Math.sin(a);
       mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.36, 10), mat(0x7a838f), sx, 0.2, sz);
       const seat = mesh(new THREE.SphereGeometry(0.24, 20, 14), mat(0x2c5aa0, false, 0.85), sx, 0.45, sz); seat.scale.y = 0.4;
     }
-    this.circles.push({ x: 0, z: 1.9, r: 1.25 });
+    this.circles.push({ x: 0, z: GZ, r: 1.25 });
 
     // airlocks: curved-roof, sealed tunnels with an inner and an outer hatch
     this.locks = [this.makeLock('AIRLOCK 1', 0), this.makeLock('AIRLOCK 2', Math.PI)];
@@ -202,8 +205,8 @@ export class Hab {
             l.cyc = l.p > 50 ? 0 : LOCK_P; return l.cyc === 0 ? 'PUMPING AIR BACK TO THE HAB' : 'REPRESSURISING FROM HAB SUPPLY';
           } });
     }
-    this.items.push({ x: 4.0 * Math.cos(-0.9 * P), z: 4.0 * Math.sin(-0.9 * P), reach: 1.7, text: () => '[E] OPEN COMMS TERMINAL', run: () => { this.onComms?.(); return ''; } });
-    const rx = 5.0 * Math.cos(rackTh), rz = 5.0 * Math.sin(rackTh);
+    this.items.push({ x: (4.0 + DR) * Math.cos(-0.9 * P), z: (4.0 + DR) * Math.sin(-0.9 * P), reach: 1.7, text: () => '[E] OPEN COMMS TERMINAL', run: () => { this.onComms?.(); return ''; } });
+    const rx = (5.0 + DR) * Math.cos(rackTh), rz = (5.0 + DR) * Math.sin(rackTh);
     this.items.push({ x: rx * 0.85, z: rz * 0.85, reach: 1.9,
       text: () => (this.busy ? '' : this.suitOn ? '[E] DOFF EVA SUIT AND RECHARGE' : '[E] DON EVA SUIT (TAKES ABOUT 30 S)'),
       run: () => {
@@ -234,11 +237,16 @@ export class Hab {
     const mkDoor = (u: number, dir: number): Door => {
       box(0.16, WALL_H, 0.1, u, WALL_H / 2, -0.75, frameM, g, 0.05); box(0.16, WALL_H, 0.1, u, WALL_H / 2, 0.75, frameM, g, 0.05); box(0.16, 0.2, 1.6, u, 2.1, 0, frameM, g, 0.06);
       const pivot = new THREE.Group(); pivot.position.set(u, 0, -0.7); g.add(pivot);
-      box(0.12, 2.0, 1.4, 0, 1.0, 0.7, doorM, pivot, 0.06);
-      for (const s of [1, -1]) {
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.035, 10, 28).rotateY(P / 2), frameM); ring.position.set(s * 0.065, 1.5, 0.7); pivot.add(ring);
-        const gl = new THREE.Mesh(new THREE.CircleGeometry(0.19, 28).rotateY((s * P) / 2), new THREE.MeshStandardMaterial({ color: 0x0a1522, roughness: 0.05, metalness: 0.6 })); gl.position.set(s * 0.066, 1.5, 0.7); pivot.add(gl);
-      }
+      // door leaf with a real round window cut through it, glazed with thin see-through glass
+      const sh = new THREE.Shape(), hw = 0.7, hh = 1.0, rr = 0.1;
+      sh.moveTo(-hw + rr, -hh); sh.lineTo(hw - rr, -hh); sh.quadraticCurveTo(hw, -hh, hw, -hh + rr); sh.lineTo(hw, hh - rr); sh.quadraticCurveTo(hw, hh, hw - rr, hh);
+      sh.lineTo(-hw + rr, hh); sh.quadraticCurveTo(-hw, hh, -hw, hh - rr); sh.lineTo(-hw, -hh + rr); sh.quadraticCurveTo(-hw, -hh, -hw + rr, -hh);
+      const hole = new THREE.Path(); hole.absarc(0, 0.6, 0.26, 0, P * 2, true); sh.holes.push(hole);
+      const leaf = new THREE.Mesh(new THREE.ExtrudeGeometry(sh, { depth: 0.12, bevelEnabled: false, curveSegments: 40 }).translate(0, 0, -0.06).rotateY(-P / 2), doorM);
+      leaf.position.set(0, 1.0, 0.7); leaf.castShadow = leaf.receiveShadow = true; pivot.add(leaf);
+      const glassM = new THREE.MeshPhysicalMaterial({ color: 0xcfe9ff, roughness: 0.04, metalness: 0, transparent: true, opacity: 0.13, depthWrite: false, side: THREE.DoubleSide });
+      const glass = new THREE.Mesh(new THREE.CircleGeometry(0.26, 40).rotateY(P / 2), glassM); glass.position.set(0, 1.6, 0.7); pivot.add(glass);
+      for (const s of [1, -1]) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.035, 10, 40).rotateY(P / 2), frameM); ring.position.set(s * 0.065, 1.6, 0.7); pivot.add(ring); }
       const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.035, 12, 28), mat(NASA.red)); wheel.position.set(0.09 * dir, 0.95, 0.7); wheel.rotation.y = P / 2; pivot.add(wheel);
       const lampM = new THREE.MeshBasicMaterial({ color: 0xff4d4d }); const lamp = new THREE.Mesh(rbox(0.06, 0.12, 0.12, 0.02), lampM); lamp.position.set(u, 2.3, -0.75); g.add(lamp);
       return { open: false, k: 0, pivot, lamp: lampM, dir };
