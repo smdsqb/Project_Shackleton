@@ -201,7 +201,7 @@ function log(text: string) {
   }).catch(() => dFl('OFFLINE', 'warn'));
   await pDem;
   await new Promise((r) => setTimeout(r, 60));
-  buildWorld(); dTer('READY', 'ok');
+  try { buildWorld(); dTer('READY', 'ok'); } catch (err) { console.error(err); dTer('FAILED', 'warn'); const li = document.createElement('li'); li.textContent = String((err as Error)?.message ?? err).slice(0, 90); li.style.color = '#ff4d4d'; bootEl.append(li); return; }
   await Promise.all([pEph, pFl]);
   enter.disabled = false; enter.textContent = 'ENTER THE OUTPOST';
   frame();

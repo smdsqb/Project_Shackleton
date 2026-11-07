@@ -9,6 +9,8 @@ const circles: { x: number; z: number; r: number }[] = [];
 export const propBlocked = (x: number, z: number) => circles.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + 0.3);
 
 const rbox = (w: number, h: number, d: number, r = 0.05) => new RoundedBoxGeometry(w, h, d, 3, Math.max(0.002, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001)));
+// three.js makes Object3D.position read-only, so it cannot be set through Object.assign.
+const asg = (m: THREE.Mesh, o: { position: THREE.Vector3 }) => (m.position.copy(o.position), m);
 const mat = (c: number, rough = 0.5, metal = 0.2) => new THREE.MeshStandardMaterial({ color: c, roughness: rough, metalness: metal });
 
 export function buildExterior(scene: THREE.Scene, heightAt: (x: number, z: number) => number, arrayPos: THREE.Vector3) {
@@ -27,7 +29,7 @@ export function buildExterior(scene: THREE.Scene, heightAt: (x: number, z: numbe
 
   // high-gain dish on the dome apex
   const dish = new THREE.Group();
-  dish.add(Object.assign(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 0.9, 16), steel), { position: new THREE.Vector3(0, 0.45, 0) }));
+  dish.add(asg(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 0.9, 16), steel), { position: new THREE.Vector3(0, 0.45, 0) }));
   const bowl = new THREE.Mesh(new THREE.SphereGeometry(0.75, 40, 14, 0, Math.PI * 2, 0, 0.6), new THREE.MeshStandardMaterial({ color: 0xf2f4f6, roughness: 0.35, metalness: 0.3, side: THREE.DoubleSide }));
   bowl.scale.y = 0.55; bowl.position.set(0, 1.15, 0); bowl.rotation.x = -0.9; dish.add(bowl);
   const feed = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.06, 0.3, 12), steel); feed.position.set(0, 1.6, 0.45); feed.rotation.x = -0.9; dish.add(feed);
@@ -62,8 +64,8 @@ export function buildExterior(scene: THREE.Scene, heightAt: (x: number, z: numbe
   // battery bank
   for (let i = 0; i < 4; i++) {
     const u = new THREE.Group();
-    u.add(Object.assign(new THREE.Mesh(rbox(1.2, 1.6, 0.9, 0.12), white), { position: new THREE.Vector3(0, 0.8, 0) }));
-    u.add(Object.assign(new THREE.Mesh(rbox(1.22, 0.1, 0.92, 0.04), blue), { position: new THREE.Vector3(0, 1.45, 0) }));
+    u.add(asg(new THREE.Mesh(rbox(1.2, 1.6, 0.9, 0.12), white), { position: new THREE.Vector3(0, 0.8, 0) }));
+    u.add(asg(new THREE.Mesh(rbox(1.22, 0.1, 0.92, 0.04), blue), { position: new THREE.Vector3(0, 1.45, 0) }));
     const pl = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.17), new THREE.MeshBasicMaterial({ map: plateTexture('BATTERY ' + (i + 1)) })); pl.position.set(0, 1.1, 0.455); u.add(pl);
     const x = 8 + i * 1.5, z = -9; put(u, x, heightAt(x, z) + 0.03, z); circles.push({ x, z, r: 0.75 });
   }
@@ -71,16 +73,16 @@ export function buildExterior(scene: THREE.Scene, heightAt: (x: number, z: numbe
   // thermal radiator: two panels on a stand
   const rad = new THREE.Group();
   for (const s of [-1, 1]) {
-    rad.add(Object.assign(new THREE.Mesh(rbox(0.1, 2.2, 3.5, 0.04), new THREE.MeshStandardMaterial({ map: panelTexture('#f7f8fa', '#c9cfd6', 7, 4), roughness: 0.4, metalness: 0.15 })), { position: new THREE.Vector3(0, 1.8, s * 1.9) }));
-    rad.add(Object.assign(new THREE.Mesh(rbox(0.16, 1.0, 0.16, 0.04), steel), { position: new THREE.Vector3(0, 0.5, s * 1.9) }));
+    rad.add(asg(new THREE.Mesh(rbox(0.1, 2.2, 3.5, 0.04), new THREE.MeshStandardMaterial({ map: panelTexture('#f7f8fa', '#c9cfd6', 7, 4), roughness: 0.4, metalness: 0.15 })), { position: new THREE.Vector3(0, 1.8, s * 1.9) }));
+    rad.add(asg(new THREE.Mesh(rbox(0.16, 1.0, 0.16, 0.04), steel), { position: new THREE.Vector3(0, 0.5, s * 1.9) }));
   }
-  rad.add(Object.assign(new THREE.Mesh(rbox(0.4, 0.12, 4.4, 0.04), steel), { position: new THREE.Vector3(0, 0.95, 0) }));
+  rad.add(asg(new THREE.Mesh(rbox(0.4, 0.12, 4.4, 0.04), steel), { position: new THREE.Vector3(0, 0.95, 0) }));
   put(rad, -7, heightAt(-7, -11) + 0.03, -11); circles.push({ x: -7, z: -12.9, r: 1.2 }, { x: -7, z: -9.1, r: 1.2 });
 
   // flag on the Moon (stiffened with a horizontal rod)
   const fl = new THREE.Group();
-  fl.add(Object.assign(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 2.6, 10), steel), { position: new THREE.Vector3(0, 1.3, 0) }));
-  fl.add(Object.assign(new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.3, 8).rotateZ(Math.PI / 2), steel), { position: new THREE.Vector3(0.65, 2.45, 0) }));
+  fl.add(asg(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 2.6, 10), steel), { position: new THREE.Vector3(0, 1.3, 0) }));
+  fl.add(asg(new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.3, 8).rotateZ(Math.PI / 2), steel), { position: new THREE.Vector3(0.65, 2.45, 0) }));
   const cloth = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.63), new THREE.MeshStandardMaterial({ map: flagTexture(), side: THREE.DoubleSide, roughness: 0.9 }));
   cloth.position.set(0.65, 2.12, 0); fl.add(cloth);
   put(fl, 8.5, heightAt(8.5, 7.5) + 0.03, 7.5); circles.push({ x: 8.5, z: 7.5, r: 0.2 });
