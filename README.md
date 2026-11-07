@@ -14,11 +14,17 @@ Without a baked tile the terrain is procedural, the Earth is a plain sphere, and
 
 ## Real terrain (LRO LOLA)
 
-The sim loads `public/terrain/shackleton.{json,bin}` when present and falls back to procedural terrain otherwise. Bake a tile from a LOLA south-polar DEM (PDS Geosciences node) with `node scripts/bake-terrain.mjs` (run it with no arguments for usage; you need the raster size, m/px and the site's pixel from the product's .LBL). The tile is a 1024 px int16 crop (about 2 MB) centred on the Hab site; metre-scale craters and roughness are layered on top of the DEM.
+The sim loads `public/terrain/shackleton.{json,bin}` when present and falls back to procedural terrain otherwise. The tile is baked from `LDEM_875S_5M` (5 m/px, 87.5 S to the pole) by `scripts/bake-terrain.mjs`, which reads everything it needs from the product's `.LBL`, detects the raster's axis orientation from the data, picks the best-lit spot on Shackleton's rim, and rotates the tile into the simulator's frame (+x east, +z south) so the Horizons Sun and Earth directions line up with the terrain shadows.
+
+To bake with no local tools: GitHub, Actions tab, "Bake LOLA terrain", Run workflow. It downloads the 1.7 GB raster on GitHub's servers and opens a pull request with the tile; a hillshade `preview.png` is attached to the run. The tile reports its own latitude/longitude, which the ephemeris function uses for the Sun/Earth tracks.
+
+## Earth comms
+
+Walk to the COMMS / OPS console in the Hab and press E. Commands: UPDATE, STATUS, HEALTH, WEATHER [city], SPACEWX, NEWS, POLITICS, or just talk. Replies take the real round-trip light delay, and need power and Earth above the horizon (checked against the terrain). The `api/comms` function fetches real headlines (BBC, NPR), weather (Open-Meteo) and the Kp index (NOAA SWPC), then has Groq write the operator's reply from those facts. Set `GROQ_API_KEY` in the Vercel project settings (optionally `GROQ_MODEL`). Without a key the console still answers with plain data-driven replies.
 
 ## Deployment
 
-Hosted on Vercel from the main branch. Set the NASA_API_KEY environment variable in the Vercel project settings (a demo key is used otherwise).
+Hosted on Vercel from the main branch. Set `GROQ_API_KEY` for the comms operator and, optionally, `NASA_API_KEY` (a demo key is used otherwise) in the Vercel project settings.
 
 ## The Hab
 

@@ -43,8 +43,8 @@ let dem: Dem | null = null;
 function demAt(x: number, z: number): number | null {
   if (!dem) return null;
   const { n, res, half, data, scale } = dem;
-  const fx = (x + half) / res, fz = (z + half) / res;
-  if (fx < 0 || fz < 0 || fx >= n - 1 || fz >= n - 1) return null;
+  // beyond the tile the edge value is extended, so the far field stays continuous with the real relief
+  const fx = Math.min(n - 1.001, Math.max(0, (x + half) / res)), fz = Math.min(n - 1.001, Math.max(0, (z + half) / res));
   const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j;
   const a = data[j * n + i], b = data[j * n + i + 1], c = data[(j + 1) * n + i], d = data[(j + 1) * n + i + 1];
   return (a + u * (b - a) + v * (c - a + u * (a - b - c + d))) * scale;
@@ -70,12 +70,17 @@ export function heightAt(x: number, z: number): number {
 
 type V3 = { x: number; y: number; z: number };
 export function isSunlit(p: V3, sun: V3): boolean {
-  for (let t = 4; t < 1500; t += t < 200 ? 2 : 6) {
+  const far = dem ? 5000 : 1500;
+  for (let t = 4; t < far; t += t < 200 ? 2 : t < 1000 ? 8 : 25) {
     if (heightAt(p.x + sun.x * t, p.z + sun.z * t) > p.y + sun.y * t) return false;
   }
   return true;
 }
 export const rand = rnd;
+
+export type Site = { lat: number; lon: number; elevM: number; craterDir: { x: number; z: number } | null; litFraction: number | null };
+let site: Site | null = null;
+export const getSite = () => site;
 
 /** Load the baked LOLA tile if one is deployed. Returns a short status for the boot screen. */
 export async function loadTerrain(): Promise<string> {
@@ -88,6 +93,10 @@ export async function loadTerrain(): Promise<string> {
     const data = new Int16Array(await b.arrayBuffer());
     if (!(meta.n > 2) || !(meta.res > 0) || !(meta.scale > 0) || data.length !== meta.n * meta.n) return 'PROCEDURAL';
     setDem(data, meta.n, meta.res, meta.scale);
+    if (Number.isFinite(meta.lat) && Number.isFinite(meta.lon)) {
+      site = { lat: meta.lat, lon: meta.lon, elevM: meta.siteElevationM ?? 0, litFraction: meta.litFraction ?? null,
+        craterDir: Number.isFinite(meta.craterDir?.x) && Number.isFinite(meta.craterDir?.z) ? meta.craterDir : null };
+    }
     return `LOLA DEM \u00b7 ${meta.res} M/PX`;
   } catch { return 'PROCEDURAL'; }
 }

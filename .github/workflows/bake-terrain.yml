@@ -1,0 +1,57 @@
+name: Bake LOLA terrain
+
+# One click: Actions tab -> "Bake LOLA terrain" -> Run workflow.
+# Downloads the 1.7 GB LOLA 5 m south-pole DEM on GitHub's servers, bakes the tile, and opens a pull request.
+on:
+  workflow_dispatch:
+    inputs:
+      size:
+        description: 'Tile size in 5 m pixels (2048 = 10 km square, ~8 MB)'
+        default: '2048'
+      pick:
+        description: 'Rim site: 0 = best lit, 1 = second best, ...'
+        default: '0'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Download LDEM_875S_5M (label + 1.7 GB raster)
+        run: |
+          mkdir -p data
+          BASE=https://imbrium.mit.edu/DATA/LOLA_GDR/POLAR/IMG
+          curl -fL --retry 6 --retry-delay 15 -o data/LDEM_875S_5M.LBL "$BASE/LDEM_875S_5M.LBL"
+          curl -fL --retry 6 --retry-delay 15 -C - -o data/LDEM_875S_5M.IMG "$BASE/LDEM_875S_5M.IMG"
+          ls -l data
+      - name: Bake terrain tile
+        run: |
+          node scripts/bake-terrain.mjs --lbl data/LDEM_875S_5M.LBL --img data/LDEM_875S_5M.IMG \
+            --size "${{ inputs.size }}" --pick "${{ inputs.pick }}" --preview preview.png | tee bake.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terrain-preview-and-log
+          path: |
+            preview.png
+            bake.log
+      - name: Commit tile to a branch and open a pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "terrain-bot"
+          git config user.email "terrain-bot@users.noreply.github.com"
+          git checkout -B terrain-tile
+          git add public/terrain/shackleton.bin public/terrain/shackleton.json
+          git commit -m "Bake LOLA 5 m terrain tile (Shackleton rim)"
+          git push -f origin terrain-tile
+          gh pr create --base main --head terrain-tile --title "Real LOLA terrain tile" \
+            --body "Baked by the Bake LOLA terrain workflow. See the preview.png artifact on the run." \
+            || echo "PR already exists or could not be created: open it from the terrain-tile branch."
