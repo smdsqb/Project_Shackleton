@@ -1,57 +1,144 @@
 name: Bake LOLA terrain
 
-# One click: Actions tab -> "Bake LOLA terrain" -> Run workflow.
-# Downloads the 1.7 GB LOLA 5 m south-pole DEM on GitHub's servers, bakes the tile, and opens a pull request.
+# One click: Actions -> Bake LOLA terrain -> Run workflow.
+# Downloads the LOLA 5 m south-polar DEM, bakes a tile, uploads
+# the preview/log/output as an artifact, and opens or updates a PR.
+
 on:
   workflow_dispatch:
     inputs:
       size:
-        description: 'Tile size in 5 m pixels (2048 = 10 km square, ~8 MB)'
-        default: '2048'
+        description: "Tile size in 5 m pixels (2048 = 10.24 km square, about 8 MB)"
+        required: true
+        type: string
+        default: "2048"
       pick:
-        description: 'Rim site: 0 = best lit, 1 = second best, ...'
-        default: '0'
+        description: "Rim site: 0 = best lit, 1 = second best, ..."
+        required: true
+        type: string
+        default: "0"
 
 permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: bake-lola-terrain
+  cancel-in-progress: false
+
 jobs:
   bake:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Download LDEM_875S_5M (label + 1.7 GB raster)
+
+      - name: Download LDEM_875S_5M (label + raster)
+        shell: bash
         run: |
+          set -euo pipefail
+
           mkdir -p data
-          BASE=https://imbrium.mit.edu/DATA/LOLA_GDR/POLAR/IMG
-          curl -fL --retry 6 --retry-delay 15 -o data/LDEM_875S_5M.LBL "$BASE/LDEM_875S_5M.LBL"
-          curl -fL --retry 6 --retry-delay 15 -C - -o data/LDEM_875S_5M.IMG "$BASE/LDEM_875S_5M.IMG"
-          ls -l data
+          BASE="https://imbrium.mit.edu/DATA/LOLA_GDR/POLAR/IMG"
+
+          curl --fail --location --show-error \
+            --retry 6 --retry-delay 15 --retry-all-errors \
+            --output data/LDEM_875S_5M.LBL \
+            "$BASE/LDEM_875S_5M.LBL"
+
+          curl --fail --location --show-error \
+            --retry 6 --retry-delay 15 --retry-all-errors \
+            --continue-at - \
+            --output data/LDEM_875S_5M.IMG \
+            "$BASE/LDEM_875S_5M.IMG"
+
+          test -s data/LDEM_875S_5M.LBL
+          test -s data/LDEM_875S_5M.IMG
+          ls -lh data/
+
       - name: Bake terrain tile
+        shell: bash
         run: |
-          node scripts/bake-terrain.mjs --lbl data/LDEM_875S_5M.LBL --img data/LDEM_875S_5M.IMG \
-            --size "${{ inputs.size }}" --pick "${{ inputs.pick }}" --preview preview.png | tee bake.log
-      - uses: actions/upload-artifact@v4
+          set -euo pipefail
+
+          node scripts/bake-terrain.mjs \
+            --lbl data/LDEM_875S_5M.LBL \
+            --img data/LDEM_875S_5M.IMG \
+            --size "${{ inputs.size }}" \
+            --pick "${{ inputs.pick }}" \
+            --preview preview.png 2>&1 | tee bake.log
+
+          echo "Checking generated terrain files..."
+          test -s public/terrain/shackleton.bin
+          test -s public/terrain/shackleton.json
+          test -s preview.png
+
+          expected_bytes=$(( ${{ inputs.size }} * ${{ inputs.size }} * 2 ))
+          actual_bytes=$(wc -c < public/terrain/shackleton.bin)
+
+          if [[ "$actual_bytes" -ne "$expected_bytes" ]]; then
+            echo "::error::Terrain binary has $actual_bytes bytes; expected $expected_bytes."
+            exit 1
+          fi
+
+          echo "Terrain outputs verified:"
+          ls -lh public/terrain/shackleton.bin public/terrain/shackleton.json preview.png
+
+      - name: Upload terrain preview, log, and generated files
+        uses: actions/upload-artifact@v4
         with:
-          name: terrain-preview-and-log
+          name: terrain-preview-and-output
+          if-no-files-found: error
+          retention-days: 14
           path: |
             preview.png
             bake.log
+            public/terrain/shackleton.bin
+            public/terrain/shackleton.json
+
       - name: Commit tile to a branch and open a pull request
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+
           git config user.name "terrain-bot"
           git config user.email "terrain-bot@users.noreply.github.com"
+
+          # Fail with a useful message if the bake did not create the files.
+          test -s public/terrain/shackleton.bin
+          test -s public/terrain/shackleton.json
+
           git checkout -B terrain-tile
+
           git add public/terrain/shackleton.bin public/terrain/shackleton.json
-          git commit -m "Bake LOLA 5 m terrain tile (Shackleton rim)"
-          git push -f origin terrain-tile
-          gh pr create --base main --head terrain-tile --title "Real LOLA terrain tile" \
-            --body "Baked by the Bake LOLA terrain workflow. See the preview.png artifact on the run." \
-            || echo "PR already exists or could not be created: open it from the terrain-tile branch."
+
+          if git diff --cached --quiet; then
+            echo "The generated terrain files are unchanged from the terrain-tile branch."
+          else
+            git commit -m "Bake LOLA 5 m terrain tile (Shackleton rim)"
+          fi
+
+          git push --force origin terrain-tile
+
+          if gh pr view terrain-tile --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Pull request already exists:"
+            gh pr view terrain-tile --repo "${{ github.repository }}" --web
+          else
+            gh pr create \
+              --repo "${{ github.repository }}" \
+              --base main \
+              --head terrain-tile \
+              --title "Real LOLA terrain tile" \
+              --body "Baked by the Bake LOLA terrain workflow. Inspect preview.png and the bake.log artifact before merging."
+          fi
