@@ -70,6 +70,7 @@ export class Hab {
   prompt = ''; toast = ''; suitHours = EVA_H; exposed = false; where = 'HAB';
   suitState: 'rack' | 'donning' | 'on' | 'doffing' = 'rack';
   taskLabel = ''; taskProgress = 0; onComms: (() => void) | null = null;
+  shelterLabel: () => string = () => ''; shelterToggle: (() => string) | null = null;
   get suitOn() { return this.suitState === 'on'; }
   get busy() { return this.suitState === 'donning' || this.suitState === 'doffing'; }
   private suitT = 0; private suitStage = -1; private suitMeshes: THREE.Group[] = []; private suitTaken: THREE.Group | null = null;
@@ -287,6 +288,9 @@ export class Hab {
             l.cyc = l.p > 50 ? 0 : LOCK_P; return l.cyc === 0 ? 'PUMPING AIR BACK TO THE HAB' : 'REPRESSURISING FROM HAB SUPPLY';
           } });
     }
+    // storm shelter: a water-lined core in the middle of the floor, marked by an amber ring
+    mesh(new THREE.RingGeometry(0.82, 0.98, 56).rotateX(-P / 2), new THREE.MeshStandardMaterial({ color: 0xffb000, emissive: 0xffb000, emissiveIntensity: 0.7, roughness: 0.6 }), 0, 0.045, 0);
+    this.items.push({ x: 0, z: 0, reach: 1.5, text: () => this.shelterLabel(), run: () => this.shelterToggle?.() ?? '' });
     this.items.push({ x: (4.0 + DR) * Math.cos(-0.9 * P), z: (4.0 + DR) * Math.sin(-0.9 * P), reach: 1.7, text: () => '[E] OPEN COMMS TERMINAL', run: () => { this.onComms?.(); return ''; } });
     const rx = (5.0 + DR) * Math.cos(rackTh), rz = (5.0 + DR) * Math.sin(rackTh);
     this.items.push({ x: rx * 0.85, z: rz * 0.85, reach: 1.9,
@@ -362,7 +366,7 @@ export class Hab {
   update(dt: number, dtSim: number, p: THREE.Vector3, sim: Sim) {
     this.clock += dt;
     // power-aware lighting: slow mains wander, brown-out when the battery is low, red emergency lighting when the bus is dead
-    const batt = sim.batteryKwh / 600, live = batt > 0 || sim.genKw >= 12, target = !live ? 0.1 : batt < 0.12 && sim.genKw < 12 ? 0.55 + batt * 3 : 1;
+    const target = sim.lightK; // 1 with the lights bus powered, dim red emergency light when you switch them off or the bus browns out
     this.powerK += (target - this.powerK) * Math.min(1, dt * 2.5);
     const wander = 1 + 0.012 * Math.sin(this.clock * 3.1) + 0.008 * Math.sin(this.clock * 7.3 + 1);
     for (const { l, base, color } of this.lights) { l.intensity = base * this.powerK * wander; l.color.setHex(this.powerK < 0.3 ? 0xff3b2a : color); }

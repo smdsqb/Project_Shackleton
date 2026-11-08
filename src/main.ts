@@ -6,6 +6,8 @@ import { Sim, SIM } from './sim';
 import { Hab, WALL_H, CAP_H } from './hab';
 import { Player } from './player';
 import { Comms, type Link } from './comms';
+import { Director } from './events';
+import { UI, WARPS, ensureAudio } from './ui';
 
 const MISSION_DAY0 = 214, EYE = 1.7, G = 1.62;
 
@@ -95,6 +97,8 @@ function buildWorld() {
   const gy = heightAt(0, 0);
   hab = new Hab(scene, gy);
   hab.onComms = openComms;
+  hab.shelterLabel = () => (sim.cmdSheltered ? '[E] LEAVE THE STORM SHELTER' : sim.spe ? '[E] TAKE COVER IN THE STORM SHELTER' : '[E] STORM SHELTER');
+  hab.shelterToggle = () => { sim.cmdSheltered = !sim.cmdSheltered; return sim.cmdSheltered ? 'YOU ARE IN THE STORM SHELTER' : 'YOU LEFT THE STORM SHELTER'; };
   dishPos.set(0, gy + WALL_H + CAP_H + 0.9, 0);
   arrayPos.set(14, heightAt(14, 6) + 12, 6);
   buildExterior(scene, heightAt, arrayPos);
@@ -105,7 +109,9 @@ function buildWorld() {
 
 // ---------- sim ----------
 const sim = new Sim();
+const dir = new Director(sim);
 let hab: Hab | null = null;
+let warp = 60, started = false;
 const player = new Player(scene, camera);
 let simMs = Date.now();
 const startMs = simMs;
@@ -119,17 +125,18 @@ function nextAos(): string {
   return '';
 }
 function link(): Link {
+  if (!sim.antennaOk) return { up: false, reason: 'THE ANTENNA GIMBAL IS JAMMED. NO LINK UNTIL IT IS REPAIRED.' };
   if (SIM.commsAlwaysOn) return { up: true, reason: '' };
-  if (!(sim.batteryKwh > 0 || sim.genKw >= SIM.loadKw)) return { up: false, reason: 'THE COMMS RACK HAS NO POWER.' };
+  if (!(sim.batteryKwh > 0 || sim.genKw >= sim.loadKw)) return { up: false, reason: 'THE COMMS RACK HAS NO POWER.' };
   if (!earthVisible) return { up: false, reason: (earthEl > 0.003 ? 'EARTH IS MASKED BY TERRAIN.' : 'EARTH IS BELOW THE LUNAR HORIZON.') + nextAos() };
   return { up: true, reason: '' };
 }
 function telemetry() {
-  const o2Days = sim.o2Kg / (SIM.crew * SIM.o2KgPerCrewDay);
+  const o2Days = sim.o2Days;
   return {
-    missionDay: MISSION_DAY0 + Math.floor((simMs - startMs) / 86400000), simTime: new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
-    batteryPct: (sim.batteryKwh / SIM.batteryCapKwh) * 100, genKw: sim.genKw, loadKw: SIM.loadKw, sunlit: sim.sunlit, o2Kg: sim.o2Kg, o2Days, co2: sim.co2,
-    doseMsv: sim.doseMsv, doseRateMsvDay: SIM.surfaceDoseMsvPerDay * SIM.habShield * sim.radMult, flare, crew: SIM.crew,
+    missionDay: MISSION_DAY0 + Math.floor(sim.t / 24), simTime: new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
+    batteryPct: (sim.batteryKwh / SIM.batteryCapKwh) * 100, genKw: sim.genKw, loadKw: sim.loadKw, sunlit: sim.sunlit, o2Kg: sim.o2Kg, o2Days, co2: sim.co2,
+    doseMsv: sim.doseMsv, doseRateMsvDay: sim.doseRateMsvH * 24, flare, crew: SIM.crew, alerts: sim.alerts().map((a) => a.text).join('; '), pressureKpa: sim.pressureKpa, tempC: sim.tempC, health: sim.health, ppO2: sim.ppO2,
     location: hab?.where ?? '', suit: hab?.suitState ?? '', suitHours: hab?.suitHours ?? 0, earthElDeg: earthEl * 57.2958,
   };
 }
@@ -143,16 +150,30 @@ const comms = new Comms({
 let yaw = -Math.PI / 2, pitch = 0, vy = 0, onGround = true, locked = false;
 const keys = new Set<string>();
 const intro = document.getElementById('intro')!, enter = document.getElementById('enter') as HTMLButtonElement;
-enter.addEventListener('click', () => { renderer.domElement.requestPointerLock(); intro.classList.add('leaving'); });
+enter.addEventListener('click', () => { started = true; ensureAudio(); renderer.domElement.requestPointerLock(); intro.classList.add('leaving'); });
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
   if (!locked && comms.padOpen) comms.closePad();
-  if (!locked && !comms.isOpen) { enter.textContent = 'RESUME'; intro.classList.remove('leaving'); keys.clear(); }
+  if (!locked && !comms.isOpen && !ui.isTabletOpen) { enter.textContent = 'RESUME'; intro.classList.remove('leaving'); keys.clear(); }
 });
-renderer.domElement.addEventListener('click', () => { if (!locked && !comms.isOpen && intro.classList.contains('leaving')) renderer.domElement.requestPointerLock(); });
+renderer.domElement.addEventListener('click', () => { if (!locked && !comms.isOpen && !ui.isTabletOpen && intro.classList.contains('leaving')) renderer.domElement.requestPointerLock(); });
 function openComms() { keys.clear(); document.exitPointerLock(); comms.open(); }
 addEventListener('mousemove', (e) => { if (!locked) return; yaw -= e.movementX * 0.0022; pitch = Math.max(-1.5, Math.min(1.5, pitch - e.movementY * 0.0022)); });
-addEventListener('keydown', (e) => { keys.add(e.code); if (e.code === 'KeyE' && locked) hab?.press(); if (e.code === 'KeyC' && locked && !e.repeat && !comms.isOpen) void comms.togglePad(); });
+addEventListener('keydown', (e) => {
+  if (comms.isOpen) return;
+  ensureAudio();
+  const dg = e.code.startsWith('Digit') ? +e.code.slice(5) : 0;
+  if (dir.active && dg >= 1 && dg <= dir.active.choices.length) { dir.resolve(dg - 1); return; }
+  if (dir.active && e.code === 'KeyH') { ui.ask(); return; }
+  if (ui.isTabletOpen) { if (e.code === 'KeyM' || e.code === 'Escape') ui.close(); return; }
+  keys.add(e.code);
+  if (!locked) return;
+  if (e.code === 'KeyE') hab?.press();
+  else if (e.code === 'KeyC' && !e.repeat) void comms.togglePad();
+  else if (e.code === 'KeyM') { keys.clear(); document.exitPointerLock(); ui.open(); }
+  else if (e.code === 'KeyT') setWarp(WARPS[(WARPS.indexOf(warp) + 1) % WARPS.length]);
+  else if (e.code === 'KeyP') sim.setArray(sim.arrayMode === 'deployed' ? 'retracted' : 'deployed');
+});
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
@@ -161,19 +182,26 @@ const taskEl = document.getElementById('task')!, taskLbl = taskEl.querySelector(
 const hud = document.getElementById('hud')!, promptEl = document.getElementById('prompt')!, toastEl = document.getElementById('toast')!;
 const cls = (v: boolean, bad = false) => (v ? (bad ? 'bad' : 'warn') : 'ok');
 const row = (k: string, v: string, c = 'ok') => `<div class="row"><span class="k">${k}</span><span class="${c}">${v}</span></div>`;
+const ui = new UI({
+  sim, dir, getWarp: () => warp, setWarp: (w) => setWarp(w), openComms: () => openComms(), clockText: () => new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC', flare: () => flare,
+  onTabletClose: () => { renderer.domElement.requestPointerLock(); },
+});
+function setWarp(w: number) { warp = w; }
+function effWarp() { const slow = dir.active || hab?.busy || hab?.suitOn || sim.cmdExposed; return Math.min(warp, slow ? 60 : 3600); }
 function drawHud(az: number, el: number) {
-  const day = MISSION_DAY0 + Math.floor((simMs - startMs) / 86400000);
-  const o2Days = sim.o2Kg / (SIM.crew * SIM.o2KgPerCrewDay);
+  const day = MISSION_DAY0 + Math.floor(sim.t / 24), o2Days = sim.o2Days, b = (sim.batteryKwh / SIM.batteryCapKwh) * 100;
   hud.innerHTML = `<h1>PROJECT SHACKLETON</h1>` +
-    row('SIM CLOCK', new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC') + row('MISSION DAY', String(day)) +
+    row('SIM CLOCK', new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC') + row('MISSION DAY', `${day} · ${(sim.t / 24).toFixed(1)} / ${SIM.missionDays}`) + row('TIME WARP', `${effWarp()}x${effWarp() < warp ? ' (limited)' : ''}`, effWarp() > 60 ? 'warn' : 'ok') +
     row('SUN EL / AZ', `${(el * 57.2958).toFixed(2)}° / ${(az * 57.2958).toFixed(0)}°`) +
     row('SUN DATA', sunLive ? 'JPL HORIZONS' : 'APPROXIMATE', sunLive ? 'ok' : 'warn') +
     row('ARRAY', sim.sunlit ? 'SUNLIT' : 'SHADOW', sim.sunlit ? 'ok' : 'bad') +
-    row('POWER GEN / LOAD', `${sim.genKw.toFixed(1)} / ${SIM.loadKw.toFixed(1)} kW`, cls(sim.genKw < SIM.loadKw)) +
-    row('BATTERY', `${((sim.batteryKwh / SIM.batteryCapKwh) * 100).toFixed(1)} %`, cls(sim.batteryKwh < SIM.batteryCapKwh * 0.25, sim.batteryKwh <= 0)) +
-    row('O2 RESERVE', `${sim.o2Kg.toFixed(0)} kg · ${o2Days.toFixed(0)} d`, cls(o2Days < 60, o2Days < 15)) +
-    row('CO2', `${sim.co2.toFixed(2)} mmHg`, cls(sim.co2 > 3, sim.co2 > 6)) +
-    row('CREW DOSE', `${sim.doseMsv.toFixed(3)} mSv`, cls(sim.radMult > 1)) +
+    row('POWER GEN / LOAD', `${sim.genKw.toFixed(1)} / ${sim.loadKw.toFixed(1)} kW`, cls(sim.genKw < sim.loadKw)) +
+    row('BATTERY', `${b.toFixed(1)} %`, cls(b < 25, b < 10)) +
+    row('CABIN', `O2 ${sim.ppO2.toFixed(1)} kPa · ${sim.pressureKpa.toFixed(0)} kPa · ${sim.tempC.toFixed(0)} C`, cls(sim.ppO2 < 19.5 || sim.pressureKpa < 95, sim.ppO2 < 17)) +
+    row('O2 TANK', `${sim.o2Kg.toFixed(0)} kg · ${o2Days > 900 ? 'steady' : o2Days.toFixed(0) + ' d'}`, cls(o2Days < 40, o2Days < 15)) +
+    row('CO2', `${sim.co2.toFixed(2)} mmHg`, cls(sim.co2 > 4, sim.co2 > 6)) +
+    row('CREW HEALTH', `${sim.health.toFixed(0)} %`, cls(sim.health < 75, sim.health < 40)) +
+    row('CREW DOSE', `${sim.doseMsv.toFixed(2)} mSv · you ${sim.cmdDoseMsv.toFixed(2)}`, cls(sim.doseMsv > 125, sim.doseMsv > 250)) +
     row('FLARES (3 D)', flare, cls(sim.radMult > 1)) +
     row('COMMS DELAY', `${SIM.commsDelayS.toFixed(2)} s one-way`) +
     row('RADIO', comms.padOpen ? 'OPEN · TAB TO CLOSE' : 'PRESS C TO CALL HOUSTON') +
@@ -188,10 +216,11 @@ let hudT = 0, litT = 0, bobT = 0;
 const fwd = new THREE.Vector3(), rgt = new THREE.Vector3(), mv = new THREE.Vector3(), sd = new THREE.Vector3();
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
-  simMs += dt * SIM.timeRate * 1000;
-  sim.step(dt * SIM.timeRate);
+  const running = started && (locked || comms.isOpen || ui.isTabletOpen), w = effWarp(), dtSim = running ? dt * w : 0;
+  simMs += dtSim * 1000; sim.cmdExposed = hab?.exposed ?? false;
+  sim.step(dtSim); dir.frame(dtSim / 3600, running ? dt : 0); ui.frame(dt);
   if (hab) {
-    hab.update(dt, dt * SIM.timeRate, camera.position, sim);
+    hab.update(dt, Math.min(dtSim, dt * 60), camera.position, sim);
     promptEl.textContent = hab.prompt; promptEl.style.display = hab.prompt && locked ? 'block' : 'none';
     toastEl.textContent = hab.toast; toastEl.style.display = hab.toast ? 'block' : 'none';
     taskEl.style.display = hab.busy ? 'block' : 'none';
