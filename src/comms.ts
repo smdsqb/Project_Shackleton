@@ -11,6 +11,38 @@ type Turn = { from: 'crew' | 'houston'; text: string };
 type Reply = { role?: string; reply?: string; emergency?: boolean } | null;
 type Channel = 'houston' | 'hab' | 'rover';
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const THINK_MS = 3000;   // Houston "thinks" for this long before the first character appears
+const QWERTY = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
+const wrongKey = (c: string) => {
+  const lo = c.toLowerCase();
+  for (const row of QWERTY) { const i = row.indexOf(lo); if (i >= 0) { const n = row[Math.max(0, Math.min(row.length - 1, i + (Math.random() < 0.5 ? -1 : 1)))], w = n === lo ? row[(i + 1) % row.length] : n; return c === lo ? w : w.toUpperCase(); } }
+  return c;
+};
+/** Types text the way a person does: uneven pace, longer beats at punctuation, the odd wrong key noticed and backspaced, a rare second thought. */
+export async function humanType(el: HTMLElement, head: string, text: string, tick: () => void, typos = true) {
+  let out = ''; const show = () => { el.textContent = head + out; tick(); };
+  const key = async (c: string) => { out += c; show(); await sleep(/[,.;:!?]/.test(c) ? 160 + Math.random() * 200 : c === ' ' ? 45 + Math.random() * 40 : 26 + Math.random() * 38); if (Math.random() < 0.012) await sleep(350 + Math.random() * 700); };
+  const erase = async (n: number) => { for (let k = 0; k < n; k++) { out = out.slice(0, -1); show(); await sleep(38 + Math.random() * 40); } };
+  let rewrites = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (typos && /[a-z]/i.test(c) && i > 4 && Math.random() < 0.012) {
+      await key(wrongKey(c)); const run = Math.floor(Math.random() * 3); let n = 0;
+      while (n < run && i + 1 + n < text.length) { await key(text[i + 1 + n]); n++; }
+      await sleep(160 + Math.random() * 280); await erase(1 + n); await sleep(70 + Math.random() * 120); await key(c); continue;
+    }
+    if (typos && c === ' ' && rewrites < 1 && i > 40 && Math.random() < 0.01) {
+      rewrites++; const back = Math.min(out.length, 8 + Math.floor(Math.random() * 10)), seg = text.slice(i - back, i);
+      await sleep(250 + Math.random() * 300); await erase(back); await sleep(300 + Math.random() * 400); for (const ch of seg) await key(ch);
+    }
+    await key(c);
+  }
+  el.textContent = head + text; tick();
+}
+/** Live transcript at a steady pace, for the voice pad. */
+async function typeLive(el: HTMLElement, head: string, text: string, cps: number, tick: () => void) {
+  for (let i = 0; i <= text.length; i++) { el.textContent = head + text.slice(0, i); tick(); await sleep(1000 / cps); }
+}
 const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
 const NO_REPLY = 'Shackleton, Houston. You are breaking up on us, say again in a minute. Houston out.';
 const HAILS = [
@@ -114,9 +146,10 @@ export class Comms {
     const wait = this.line(this.log, 'sys', `UPLINK ... round trip ${(rt / 1000).toFixed(1)} s${channel === 'houston' ? '' : ' (UHF)'}`);
     const data = await this.ask(msg, channel); const left = rt - (performance.now() - t0); if (left > 0) await sleep(left);
     const reply = data?.reply ?? (channel === 'houston' ? NO_REPLY : 'Say again, you are breaking up. Over.'); wait.remove(); if (channel === 'houston') this.turns.push({ from: 'crew', text: msg }, { from: 'houston', text: reply });
-    const el = this.line(this.log, 'rx', ''); const head = `${this.stamp()}  ${data?.role ?? (channel === 'hab' ? 'HAB OPS' : channel === 'rover' ? 'ROVER 1' : 'CAPCOM')}  `;
-    for (let i = 0; i <= reply.length; i += 3) { el.textContent = head + reply.slice(0, i); this.log.scrollTop = this.log.scrollHeight; await sleep(14); }
-    el.textContent = head + reply; this.busy = false;
+    const who = data?.role ?? (channel === 'hab' ? 'HAB OPS' : channel === 'rover' ? 'ROVER 1' : 'CAPCOM'), emerg = !!data?.emergency;
+    const think = this.line(this.log, 'sys', `${who} is typing ...`); await sleep(emerg ? 800 : THINK_MS); think.remove();
+    const el = this.line(this.log, 'rx', ''); await humanType(el, `${this.stamp()}  ${who}  `, reply, () => { this.log.scrollTop = this.log.scrollHeight; }, !emerg);
+    this.busy = false;
   }
 
   // ---------- suit pad: key press, static, female link manager, then voice chat with Houston ----------
@@ -132,14 +165,14 @@ export class Comms {
   private setChip(t: string, bad = false) { this.pchip.textContent = t; this.pchip.className = 'chip' + (bad ? ' bad' : ''); this.screen(); }
   private screen() { this.host.onPad(this.padOpen, ['SUIT COMMS', this.pchip.textContent ?? '', this.lastRx.slice(0, 17), this.lastRx.slice(17, 34), this.lastRx.slice(34, 51)], this.ready); }
   private async connect(s: number) {
-    this.radio.staticOn(0.22);
+    this.radio.staticOn(0.05);
     const l = this.host.link();
     const script = l.up ? 'Shackleton link manager. Comms module powered and running. Slewing the high gain antenna to Earth. Carrier acquired. Link is up. Stand by for Houston.'
       : `Shackleton link manager. I cannot hold Earth right now. ${l.reason}`;
     this.line(this.plog, 'sys', 'LINK MANAGER  ' + script);
     await this.radio.speak(script, 'female'); if (s !== this.session) return;
     if (!l.up) { await sleep(400); if (s === this.session) this.closePad(); return; }
-    this.radio.staticSet(0.06);
+    this.radio.staticSet(0.015);
     const hail = pick(HAILS); this.line(this.plog, 'rx', 'HOUSTON  ' + hail); this.lastRx = hail;
     await this.radio.quindar('in'); if (s !== this.session) return;
     await this.radio.speak(hail, 'male'); if (s !== this.session) return;
@@ -151,15 +184,16 @@ export class Comms {
     this.line(this.plog, 'tx', 'YOU  ' + text);
     const l = this.host.link(); if (!l.up) { this.line(this.plog, 'sys', `NO LINK. ${l.reason}`); return; }
     const s = this.session; this.busy = true; this.pin.disabled = true; this.setChip('UPLINK');
-    this.radio.staticSet(0.14); await this.radio.quindar('out');
+    this.radio.staticSet(0.03); await this.radio.quindar('out');
     const t0 = performance.now(), rt = this.host.delayS() * 2000, data = await this.ask(text), left = rt - (performance.now() - t0);
     if (left > 0) await sleep(left); if (s !== this.session) return;
+    this.setChip('HOUSTON THINKING'); await sleep(data?.emergency ? 800 : THINK_MS); if (s !== this.session) return;
     const reply = data?.reply ?? NO_REPLY, emerg = !!data?.emergency; this.turns.push({ from: 'crew', text }, { from: 'houston', text: reply });
     this.pad.classList.toggle('emerg', emerg); this.setChip(emerg ? 'EMERGENCY' : 'DOWNLINK', emerg);
-    this.radio.staticSet(emerg ? 0.05 : 0.1); await this.radio.quindar('in'); if (s !== this.session) return;
-    await this.radio.speak(reply, 'male', () => { this.line(this.plog, 'rx', 'HOUSTON  ' + reply); this.lastRx = reply; this.screen(); }, emerg);
+    this.radio.staticSet(emerg ? 0.01 : 0.02); await this.radio.quindar('in'); if (s !== this.session) return;
+    await this.radio.speak(reply, 'male', () => { const el = this.line(this.plog, 'rx', 'HOUSTON  '); void typeLive(el, 'HOUSTON  ', reply, 16, () => { this.plog.scrollTop = this.plog.scrollHeight; }); this.lastRx = reply; this.screen(); }, emerg);
     if (s !== this.session) return;
     await this.radio.quindar('out'); if (s !== this.session) return;
-    this.radio.staticSet(0.05); this.busy = false; this.pin.disabled = false; this.setChip(`LINK UP · ${this.host.delayS().toFixed(2)} S`, false); this.pin.focus();
+    this.radio.staticSet(0.012); this.busy = false; this.pin.disabled = false; this.setChip(`LINK UP · ${this.host.delayS().toFixed(2)} S`, false); this.pin.focus();
   }
 }
