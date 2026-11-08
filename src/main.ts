@@ -7,7 +7,7 @@ import { Hab, WALL_H, CAP_H } from './hab';
 import { Player } from './player';
 import { Comms, type Link } from './comms';
 import { Director } from './events';
-import { UI, WARPS, ensureAudio } from './ui';
+import { UI, ensureAudio } from './ui';
 
 const MISSION_DAY0 = 214, EYE = 1.7, G = 1.62;
 
@@ -97,8 +97,6 @@ function buildWorld() {
   const gy = heightAt(0, 0);
   hab = new Hab(scene, gy);
   hab.onComms = openComms;
-  hab.shelterLabel = () => (sim.cmdSheltered ? '[E] LEAVE THE STORM SHELTER' : sim.spe ? '[E] TAKE COVER IN THE STORM SHELTER' : '[E] STORM SHELTER');
-  hab.shelterToggle = () => { sim.cmdSheltered = !sim.cmdSheltered; return sim.cmdSheltered ? 'YOU ARE IN THE STORM SHELTER' : 'YOU LEFT THE STORM SHELTER'; };
   dishPos.set(0, gy + WALL_H + CAP_H + 0.9, 0);
   arrayPos.set(14, heightAt(14, 6) + 12, 6);
   buildExterior(scene, heightAt, arrayPos);
@@ -111,7 +109,7 @@ function buildWorld() {
 const sim = new Sim();
 const dir = new Director(sim);
 let hab: Hab | null = null;
-let warp = 60, started = false;
+let started = false;
 const player = new Player(scene, camera);
 let simMs = Date.now();
 const startMs = simMs;
@@ -171,7 +169,6 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyE') hab?.press();
   else if (e.code === 'KeyC' && !e.repeat) void comms.togglePad();
   else if (e.code === 'KeyM') { keys.clear(); document.exitPointerLock(); ui.open(); }
-  else if (e.code === 'KeyT') setWarp(WARPS[(WARPS.indexOf(warp) + 1) % WARPS.length]);
   else if (e.code === 'KeyP') sim.setArray(sim.arrayMode === 'deployed' ? 'retracted' : 'deployed');
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
@@ -183,15 +180,15 @@ const hud = document.getElementById('hud')!, promptEl = document.getElementById(
 const cls = (v: boolean, bad = false) => (v ? (bad ? 'bad' : 'warn') : 'ok');
 const row = (k: string, v: string, c = 'ok') => `<div class="row"><span class="k">${k}</span><span class="${c}">${v}</span></div>`;
 const ui = new UI({
-  sim, dir, getWarp: () => warp, setWarp: (w) => setWarp(w), openComms: () => openComms(), clockText: () => new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC', flare: () => flare,
+  sim, dir, openComms: () => openComms(), clockText: () => new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC', flare: () => flare,
   onTabletClose: () => { renderer.domElement.requestPointerLock(); },
 });
-function setWarp(w: number) { warp = w; }
-function effWarp() { const slow = dir.active || hab?.busy || hab?.suitOn || sim.cmdExposed; return Math.min(warp, slow ? 60 : 3600); }
+// one fixed clock; it eases to 60x by itself while a decision card is open or someone is on EVA, so nothing outruns the player
+function clockRate() { const slow = dir.active || hab?.busy || hab?.suitOn || sim.cmdExposed; return slow ? 60 : SIM.timeRate; }
 function drawHud(az: number, el: number) {
   const day = MISSION_DAY0 + Math.floor(sim.t / 24), o2Days = sim.o2Days, b = (sim.batteryKwh / SIM.batteryCapKwh) * 100;
   hud.innerHTML = `<h1>PROJECT SHACKLETON</h1>` +
-    row('SIM CLOCK', new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC') + row('MISSION DAY', `${day} · ${(sim.t / 24).toFixed(1)} / ${SIM.missionDays}`) + row('TIME WARP', `${effWarp()}x${effWarp() < warp ? ' (limited)' : ''}`, effWarp() > 60 ? 'warn' : 'ok') +
+    row('SIM CLOCK', new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC') + row('MISSION DAY', `${day} · ${(sim.t / 24).toFixed(1)} / ${SIM.missionDays}`) +
     row('SUN EL / AZ', `${(el * 57.2958).toFixed(2)}° / ${(az * 57.2958).toFixed(0)}°`) +
     row('SUN DATA', sunLive ? 'JPL HORIZONS' : 'APPROXIMATE', sunLive ? 'ok' : 'warn') +
     row('ARRAY', sim.sunlit ? 'SUNLIT' : 'SHADOW', sim.sunlit ? 'ok' : 'bad') +
@@ -216,7 +213,7 @@ let hudT = 0, litT = 0, bobT = 0;
 const fwd = new THREE.Vector3(), rgt = new THREE.Vector3(), mv = new THREE.Vector3(), sd = new THREE.Vector3();
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
-  const running = started && (locked || comms.isOpen || ui.isTabletOpen), w = effWarp(), dtSim = running ? dt * w : 0;
+  const running = started && (locked || comms.isOpen || ui.isTabletOpen), w = clockRate(), dtSim = running ? dt * w : 0;
   simMs += dtSim * 1000; sim.cmdExposed = hab?.exposed ?? false;
   sim.step(dtSim); dir.frame(dtSim / 3600, running ? dt : 0); ui.frame(dt);
   if (hab) {

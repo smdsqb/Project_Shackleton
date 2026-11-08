@@ -38,7 +38,7 @@ export const EVENTS: EventDef[] = [
       const inHab = total * s.speFactor();
       const shelterIdx = inHab > 12 ? 0 : 1;
       return {
-        brief: `NOAA S${cls} solar radiation storm. Protons reach the Moon in about 45 minutes and stay dangerous for roughly ${Math.round(tau * 3)} hours. The Moon has no magnetic field or air to protect you. Staying in the hab would give the crew about ${inHab.toFixed(0)} mSv; the storm shelter about ${(inHab * 0.15).toFixed(0)} mSv. The 30-day limit is ${SIM.limit30} mSv. (Walk to the glowing ring and press E to take cover yourself.)`,
+        brief: `NOAA S${cls} solar radiation storm. Protons reach the Moon in about 45 minutes and stay dangerous for roughly ${Math.round(tau * 3)} hours. The Moon has no magnetic field or air to protect you. Staying in the hab would give the crew about ${inHab.toFixed(0)} mSv; the storm shelter about ${(inHab * 0.15).toFixed(0)} mSv. The 30-day limit is ${SIM.limit30} mSv. Anyone still outside on an EVA when it arrives takes the full dose, so get everyone indoors.`,
         advice: { idx: shelterIdx, why: shelterIdx === 0 ? `That is ${inHab.toFixed(0)} mSv in the hab. Shelter now.` : 'Dose is small enough that carrying on is acceptable, but keep EVAs off the schedule.' },
         choices: [
           { label: 'SHELTER NOW', detail: 'Crew in the water-lined shelter. Work stops. Morale drops.', run: () => { s.shelter = true; return 'Crew in the storm shelter. All tasks paused until the storm passes.'; } },

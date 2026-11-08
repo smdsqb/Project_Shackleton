@@ -22,9 +22,8 @@ const CSS = `
 
 const f = (n: number, d = 1) => n.toFixed(d), pct = (n: number) => `${Math.round(n)}%`;
 const cls = (bad: boolean, warn: boolean) => (bad ? 'bad' : warn ? 'warn' : 'ok');
-export const WARPS = [1, 60, 600, 3600];
 
-export type UiHost = { sim: Sim; dir: Director; getWarp(): number; setWarp(w: number): void; openComms(): void; onTabletClose(): void; clockText(): string; flare(): string };
+export type UiHost = { sim: Sim; dir: Director; openComms(): void; onTabletClose(): void; clockText(): string; flare(): string };
 
 let ac: AudioContext | null = null;
 export function ensureAudio() { try { ac ??= new AudioContext(); void ac.resume(); } catch { /* no audio */ } }
@@ -43,7 +42,7 @@ export class UI {
     const row = (key: string, label: string) => `<div class="r"><span>${label}</span><b data-k="${key}"></b></div>`;
     const bar = (key: string) => `<div class="bar"><i data-b="${key}"></i></div>`;
     this.ops = document.createElement('div'); this.ops.id = 'ops';
-    this.ops.innerHTML = `<header><span>CREW TABLET · MISSION OPS · <span data-k="clock"></span></span><span>${WARPS.map((w) => `<button data-warp="${w}">${w}x</button>`).join('')}<button data-act="comms">EARTH COMMS</button><button data-act="close">CLOSE [M]</button></span></header>
+    this.ops.innerHTML = `<header><span>CREW TABLET · MISSION OPS · <span data-k="clock"></span></span><span><button data-act="comms">EARTH COMMS</button><button data-act="close">CLOSE [M]</button></span></header>
     <div class="grid">
      <section><h3>POWER BUDGET</h3><div class="sub">The array makes power only when the Sun hits it. Everything you switch on is a trade-off against the battery.</div>
       ${row('gen', 'Array output')}${row('load', 'Base load')}${row('batt', 'Battery')}${bar('batt')}${row('arr', 'Array')}${row('dust', 'Dust on cells')}
@@ -66,7 +65,7 @@ export class UI {
     this.ops.querySelectorAll<HTMLInputElement>('[data-load]').forEach((e) => this.loadBoxes.set(e.dataset.load as LoadId, e)); this.ops.querySelectorAll<HTMLElement>('[data-shed]').forEach((e) => this.shedTags.set(e.dataset.shed as LoadId, e));
     this.ops.addEventListener('click', (e) => {
       const t = (e.target as HTMLElement).closest('button') as HTMLElement | null; if (!t) return; const s = h.sim;
-      if (t.dataset.warp) h.setWarp(+t.dataset.warp); else if (t.dataset.job) { const r = s.startJob(t.dataset.job as JobId); if (r) this.flash(r); }
+      if (t.dataset.job) { const r = s.startJob(t.dataset.job as JobId); if (r) this.flash(r); }
       else if (t.dataset.act === 'close') this.close(); else if (t.dataset.act === 'comms') { this.close(true); h.openComms(); }
       else if (t.dataset.act?.startsWith('array:')) s.setArray(t.dataset.act.slice(6) as never);
       else if (t.dataset.act === 'shelter') { s.shelter = !s.shelter; s.shelterAt = Infinity; s.say(s.shelter ? 'Crew ordered into the storm shelter.' : 'Crew ordered out of the storm shelter.'); }
@@ -81,7 +80,7 @@ export class UI {
     this.res = document.createElement('div'); this.res.id = 'result'; document.body.append(this.res);
     this.alertsEl = document.createElement('div'); this.alertsEl.id = 'alerts'; document.body.append(this.alertsEl);
     this.end = document.createElement('div'); this.end.id = 'endscr'; document.body.append(this.end);
-    h.dir.onEvent = (ev) => { this.showCard(ev); beep('event'); if (h.getWarp() > 60) h.setWarp(60); };
+    h.dir.onEvent = (ev) => { this.showCard(ev); beep('event'); };
     h.dir.onResolve = (m) => { this.card.style.display = 'none'; this.lastEvent = null; this.res.textContent = m; this.res.style.display = 'block'; this.resT = 9; beep('ok'); };
   }
 
@@ -116,7 +115,7 @@ export class UI {
   private refresh(first = false) {
     const s = this.h.sim, set = (k: string, t: string, c = '') => { const e = this.k.get(k); if (e) { e.textContent = t; e.className = c; } }, bar = (k: string, v: number, c = '') => { const e = this.bars.get(k); if (e) { e.style.width = `${Math.max(0, Math.min(100, v))}%`; if (c) e.style.background = c; } };
     const b = (s.batteryKwh / SIM.batteryCapKwh) * 100, mm = (n: number) => `${Math.floor(n / 24)}d ${Math.floor(n % 24)}h`;
-    set('clock', `${this.h.clockText()} · WARP ${this.h.getWarp()}x`);
+    set('clock', this.h.clockText());
     set('gen', `${f(s.genKw)} kW`, s.genKw > 0 ? 'ok' : 'warn'); set('load', `${f(s.loadKw)} kW`, cls(s.loadKw > s.genKw + 25, s.loadKw > s.genKw));
     set('batt', `${pct(b)} · ${s.batteryHours > 900 ? 'charging' : f(s.batteryHours, 0) + ' h left'}`, cls(b < 10, b < 25)); bar('batt', b, b < 25 ? '#ff5a5a' : '#4fd8ff');
     set('arr', s.arrayMode.toUpperCase() + (Math.abs(s.arrayK - (s.arrayMode === 'deployed' ? 1 : s.arrayMode === 'tilted' ? 0.3 : 0)) > 0.02 ? ' (moving)' : ''), s.arrayMode === 'deployed' ? 'ok' : 'warn'); set('dust', pct(s.dust * 100) + (s.arrayHealth < 1 ? ` · cells ${pct(s.arrayHealth * 100)}` : ''), cls(s.dust > 0.25, s.dust > 0.05));
@@ -128,12 +127,11 @@ export class UI {
     set('oxy', `${f(s.oxyKgH * 24)} kg/day (need ${f(SIM.crew * SIM.o2KgPerCrewDay)})`, s.oxyKgH * 24 < SIM.crew * SIM.o2KgPerCrewDay ? 'warn' : 'ok');
     const lioh = this.ops.querySelector<HTMLInputElement>('[data-lioh]')!, ox = this.ops.querySelector<HTMLInputElement>('[data-oxy]')!; if (document.activeElement !== lioh) lioh.checked = s.liohOn; if (document.activeElement !== ox) ox.value = String(Math.round(s.oxyThrottle * 100)); set('lioh', `${f(s.lioh, 1)} left`);
     set('rate', `${f(s.doseRateMsvH * 24, 2)} mSv/day`, cls(s.doseRateMsvH * 24 > 20, s.doseRateMsvH * 24 > 3)); set('dose', `${f(s.doseMsv, 1)} / 250 mSv`, cls(s.doseMsv > 250, s.doseMsv > 125)); bar('dose', (s.doseMsv / 250) * 100, s.doseMsv > 125 ? '#ff5a5a' : '#4fd8ff');
-    set('cdose', `${f(s.cmdDoseMsv, 1)} mSv${s.cmdExposed ? ' · OUTSIDE' : s.cmdSheltered ? ' · sheltered' : ''}`); set('shield', `${f(s.shieldM, 1)} m`, s.shieldM > 0 ? 'ok' : 'warn');
+    set('cdose', `${f(s.cmdDoseMsv, 1)} mSv${s.cmdExposed ? ' · OUTSIDE' : s.shelter ? ' · sheltered' : ''}`); set('shield', `${f(s.shieldM, 1)} m`, s.shieldM > 0 ? 'ok' : 'warn');
     set('spe', s.spe ? (s.t < s.spe.arrive ? `S${s.spe.cls} arriving in ${f(s.speEtaH * 60, 0)} min` : `S${s.spe.cls} active · ${f(s.speRateUnshielded(), 1)} mSv/h outside`) : 'none', s.spe ? 'bad' : 'ok'); set('flare', this.h.flare(), s.radMult > 1 ? 'warn' : '');
     set('day', `${SIM.startDay + Math.floor(s.t / 24)} (${f(s.t / 24, 1)} of ${SIM.missionDays})`); bar('day', (s.t / (SIM.missionDays * 24)) * 100); set('health', pct(s.health), cls(s.health < 40, s.health < 75)); bar('health', s.health, s.health < 50 ? '#ff5a5a' : '#7ee787'); set('morale', pct(s.morale), cls(s.morale < 30, s.morale < 60)); set('sci', pct(s.score().sci));
     set('job', s.job ? `${JOBS[s.job.id].name} · ${f(s.job.left, 1)} h${s.shelter ? ' (paused)' : !s.jobServed ? ' (no power)' : ''}` : 'idle'); bar('job', s.job ? (1 - s.job.left / JOBS[s.job.id].hours) * 100 : 0);
     this.ops.querySelectorAll<HTMLButtonElement>('[data-job]').forEach((x) => { const why = s.canStart(x.dataset.job as JobId); x.disabled = !!why; if (why) x.dataset.why = why; });
-    this.ops.querySelectorAll<HTMLButtonElement>('[data-warp]').forEach((x) => x.classList.toggle('sel', +x.dataset.warp! === this.h.getWarp()));
     (this.ops.querySelector('[data-act=shelter]') as HTMLElement).textContent = s.shelter ? 'CREW: LEAVE STORM SHELTER' : 'CREW: ENTER STORM SHELTER';
     const lg = this.k.get('log')!; lg.innerHTML = [...s.log].reverse().slice(0, 12).map((l) => `<div>D${SIM.startDay + Math.floor(l.t / 24)} ${String(Math.floor(l.t % 24)).padStart(2, '0')}:${String(Math.floor((l.t % 1) * 60)).padStart(2, '0')} ${l.text}</div>`).join('');
     void first; void mm;
