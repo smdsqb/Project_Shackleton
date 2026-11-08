@@ -21,7 +21,7 @@ Keep 5 crew alive at Shackleton for 14 days. The sim (`src/sim.ts`) couples powe
 - **Radiation:** 1.3 mSv/day background, regolith cover, storm shelter, solar particle events weighted by the real NASA DONKI flare class. Limits: 250 mSv (30 days), 600 mSv (career).
 - **Communication delay:** you can ask Houston (H) during an emergency, but the answer takes the round-trip light time plus the flight director's poll, and an antenna fault removes the option entirely.
 - **Decisions:** timed events with 3 options each. Every option costs something. Doing nothing applies the default. The first event is always the dust cloud.
-- Keys: M tablet, T time warp (1x / 60x / 600x / 3600x, auto-limited during emergencies or EVA), P array, 1-3 decide, H ask Houston, E interact. Food production is deliberately left out of this version.
+- Clock: one fixed rate (600x, so 14 days take about 35 minutes) that eases to 60x on its own during a decision card or an EVA. No player-controlled time warp. Keys: M tablet, P array, 1-3 decide, H ask Houston, E interact. Food production is deliberately left out of this version.
 - Training tempo: events are far more frequent than in reality. `SIM.commsAlwaysOn` keeps the Earth link up regardless of line of sight; set it to `false` for the strict rules.
 
 ## Real terrain (LRO LOLA)

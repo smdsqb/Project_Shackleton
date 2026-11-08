@@ -9,7 +9,7 @@ export const SIM = {
   gcrMsvDay: 1.3, limit30: 250, limitCareer: 600,
   commsDelayS: 1.28, commsAlwaysOn: true, // TEST MODE: Earth link ignores Earth line of sight and power. Set false for the real rules.
   houstonPollS: 7, // time the flight director needs to poll the room, on top of the light time
-  timeRate: 60,
+  timeRate: 600, // fixed clock: 1 real second = 10 sim minutes, so 14 days take about 35 minutes. Drops to 60x on its own during a decision or an EVA (see main.ts).
 };
 export type LoadId = 'thermal' | 'avionics' | 'scrubber' | 'oxygenator' | 'water' | 'lights' | 'lab';
 export const LOADS: Record<LoadId, { name: string; kw: number; prio: number; why: string }> = {
@@ -52,7 +52,7 @@ export class Sim {
   spares = { bed: 1, stack: 1 }; antennaOk = true; resupplied = false;
   get ppO2() { return (21.3 * this.cabinO2Kg) / SIM.cabinO2Kg; }
   // radiation
-  shieldM = 0; shelter = false; cmdSheltered = false; cmdExposed = false; shelterAt = Infinity;
+  shieldM = 0; shelter = false; cmdExposed = false; shelterAt = Infinity;
   spe: { cls: number; total: number; arrive: number; tau: number } | null = null;
   doseMsv = 0; cmdDoseMsv = 0; doseRateMsvH = 0; flareLetter = 'NONE'; radMult = 1;
   // crew
@@ -165,7 +165,8 @@ export class Sim {
     const evaFrac = this.job && JOBS[this.job.id].eva && crewWorking && this.jobServed ? 0.4 : 0, sh = this.shelter ? 0.15 : 1;
     const inRate = gcr * g * (this.shelter ? 0.85 : 1) + sp * sf * sh, outRate = gcr + sp;
     this.doseRateMsvH = (1 - evaFrac) * inRate + evaFrac * outRate; this.doseMsv += this.doseRateMsvH * h;
-    const cmdIn = gcr * g * (this.cmdSheltered ? 0.85 : 1) + sp * sf * (this.cmdSheltered ? 0.15 : 1);
+    const cmdSh = this.shelter && !this.cmdExposed; // the commander shelters with the crew, unless caught outside
+    const cmdIn = gcr * g * (cmdSh ? 0.85 : 1) + sp * sf * (cmdSh ? 0.15 : 1);
     this.cmdDoseMsv += (this.cmdExposed ? outRate : cmdIn) * h;
 
     // ---- jobs and science ----
