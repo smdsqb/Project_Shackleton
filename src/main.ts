@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { heightAt, isSunlit, rand, loadTerrain, getSite } from './terrain';
-import { buildExterior, propBlocked } from './exterior';
+import { buildExterior, propBlocked, propHit } from './exterior';
+import { Rover } from './rover';
 import { bodyDir, loadEphemeris } from './ephemeris';
 import { Sim, SIM } from './sim';
 import { Hab, WALL_H, CAP_H } from './hab';
@@ -96,10 +97,12 @@ function buildWorld() {
 
   const gy = heightAt(0, 0);
   hab = new Hab(scene, gy);
-  hab.onComms = openComms;
+  hab.onComms = () => openComms('hab');
   dishPos.set(0, gy + WALL_H + CAP_H + 0.9, 0);
   arrayPos.set(14, heightAt(14, 6) + 12, 6);
   buildExterior(scene, heightAt, arrayPos);
+  rover = new Rover(scene, (x, z, r) => (hab ? hab.solid(x, z, r) : false) || propHit(x, z, r), () => dishPos);
+  rover.onRadio = () => openComms('rover');
   camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE;
   // ULTRA by default. Add ?quality=high to the address to drop the interior light shadows if the frame rate suffers.
   if (/[?&]quality=high\b/.test(location.search)) scene.traverse((o) => { if ((o as THREE.PointLight).isPointLight) o.castShadow = false; });
@@ -109,6 +112,7 @@ function buildWorld() {
 const sim = new Sim();
 const dir = new Director(sim);
 let hab: Hab | null = null;
+let rover: Rover | null = null;
 let started = false;
 const player = new Player(scene, camera);
 let simMs = Date.now();
@@ -142,6 +146,7 @@ const comms = new Comms({
   telemetry, link, now: () => new Date(simMs), delayS: () => SIM.commsDelayS,
   onClose: () => { renderer.domElement.requestPointerLock(); },
   onPad: (open, lines, live) => player.setPad(lines, live && open),
+  rover: { telemetry: () => rover?.telemetry(), link: () => rover?.habLink() ?? { up: false, dist: 0, reason: 'THERE IS NO ROVER.' }, occupied: () => !!rover && rover.inside },
 });
 
 // ---------- controls ----------
@@ -155,7 +160,7 @@ document.addEventListener('pointerlockchange', () => {
   if (!locked && !comms.isOpen && !ui.isTabletOpen) { enter.textContent = 'RESUME'; intro.classList.remove('leaving'); keys.clear(); }
 });
 renderer.domElement.addEventListener('click', () => { if (!locked && !comms.isOpen && !ui.isTabletOpen && intro.classList.contains('leaving')) renderer.domElement.requestPointerLock(); });
-function openComms() { keys.clear(); document.exitPointerLock(); comms.open(); }
+function openComms(mode: 'hab' | 'rover' = 'hab') { keys.clear(); document.exitPointerLock(); comms.open(mode); }
 addEventListener('mousemove', (e) => { if (!locked) return; yaw -= e.movementX * 0.0022; pitch = Math.max(-1.5, Math.min(1.5, pitch - e.movementY * 0.0022)); });
 addEventListener('keydown', (e) => {
   if (comms.isOpen) return;
@@ -166,8 +171,10 @@ addEventListener('keydown', (e) => {
   if (ui.isTabletOpen) { if (e.code === 'KeyM' || e.code === 'Escape') ui.close(); return; }
   keys.add(e.code);
   if (!locked) return;
-  if (e.code === 'KeyE') hab?.press();
-  else if (e.code === 'KeyC' && !e.repeat) void comms.togglePad();
+  if (e.code === 'KeyE') { if (rover?.hasPrompt) rover.press(); else hab?.press(); }
+  else if (e.code === 'KeyL' && rover?.inside) rover.toggleLights();
+  else if (e.code === 'KeyR' && rover?.mode === 'driving') rover.onRadio?.();
+  else if (e.code === 'KeyC' && !e.repeat) { if (rover?.inside) rover.onRadio?.(); else void comms.togglePad(); }
   else if (e.code === 'KeyM') { keys.clear(); document.exitPointerLock(); ui.open(); }
   else if (e.code === 'KeyP') sim.setArray(sim.arrayMode === 'deployed' ? 'retracted' : 'deployed');
 });
@@ -179,12 +186,13 @@ const taskEl = document.getElementById('task')!, taskLbl = taskEl.querySelector(
 const hud = document.getElementById('hud')!, promptEl = document.getElementById('prompt')!, toastEl = document.getElementById('toast')!;
 const cls = (v: boolean, bad = false) => (v ? (bad ? 'bad' : 'warn') : 'ok');
 const row = (k: string, v: string, c = 'ok') => `<div class="row"><span class="k">${k}</span><span class="${c}">${v}</span></div>`;
+const wrapPi = (a: number) => ((((a + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) - Math.PI;
 const ui = new UI({
   sim, dir, openComms: () => openComms(), clockText: () => new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC', flare: () => flare,
   onTabletClose: () => { renderer.domElement.requestPointerLock(); },
 });
 // one fixed clock; it eases to 60x by itself while a decision card is open or someone is on EVA, so nothing outruns the player
-function clockRate() { const slow = dir.active || hab?.busy || hab?.suitOn || sim.cmdExposed; return slow ? 60 : SIM.timeRate; }
+function clockRate() { const slow = dir.active || hab?.busy || hab?.suitOn || sim.cmdExposed || rover?.inside || rover?.busy; return slow ? 60 : SIM.timeRate; }
 function drawHud(az: number, el: number) {
   const day = MISSION_DAY0 + Math.floor(sim.t / 24), o2Days = sim.o2Days, b = (sim.batteryKwh / SIM.batteryCapKwh) * 100;
   hud.innerHTML = `<h1>PROJECT SHACKLETON</h1>` +
@@ -204,7 +212,8 @@ function drawHud(az: number, el: number) {
     row('RADIO', comms.padOpen ? 'OPEN · TAB TO CLOSE' : 'PRESS C TO CALL HOUSTON') +
     row('EARTH LINK', SIM.commsAlwaysOn ? 'ONLINE · 24x7 TEST MODE' : link().up ? 'ACQUIRED' : 'LOS', link().up ? 'ok' : 'bad') +
     row('EARTH IN VIEW', earthVisible ? `YES · EL ${(earthEl * 57.2958).toFixed(1)}°` : 'NO · LINE OF SIGHT BLOCKED', earthVisible ? 'ok' : 'warn') +
-    (hab ? hab.status().map(([k, v, c]) => row(k, v, c)).join('') : '');
+    (hab ? hab.status().map(([k, v, c]) => row(k, v, c)).join('') : '') +
+    (rover ? rover.status().map(([k, v, c]) => row(k, v, c)).join('') : '');
 }
 
 // ---------- loop ----------
@@ -217,35 +226,52 @@ function frame() {
   simMs += dtSim * 1000; sim.cmdExposed = hab?.exposed ?? false;
   sim.step(dtSim); dir.frame(dtSim / 3600, running ? dt : 0); ui.frame(dt);
   if (hab) {
+    hab.shelter = !!rover && rover.inside;
     hab.update(dt, Math.min(dtSim, dt * 60), camera.position, sim);
-    promptEl.textContent = hab.prompt; promptEl.style.display = hab.prompt && locked ? 'block' : 'none';
-    toastEl.textContent = hab.toast; toastEl.style.display = hab.toast ? 'block' : 'none';
-    taskEl.style.display = hab.busy ? 'block' : 'none';
-    if (hab.busy) { taskLbl.textContent = hab.taskLabel; taskBar.style.width = (hab.taskProgress * 100).toFixed(1) + '%'; }
     visorEl.classList.toggle('on', hab.suitOn);
+  }
+  if (rover && hab) {
+    const r = rover.update(dt, Math.min(dtSim, dt * 60), { player: camera.position, suitOn: hab.suitOn, keys, sim, hab: dishPos });
+    yaw += r.dHeading;
+    if (rover.pendingExit) { camera.position.x = rover.pendingExit.x; camera.position.z = rover.pendingExit.y; camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE; vy = 0; yaw = rover.heading + Math.PI; rover.pendingExit = null; }
+  }
+  {
+    const pr = rover?.prompt || hab?.prompt || '', tt = rover?.toast || hab?.toast || '', busy = !!(rover?.busy || hab?.busy);
+    promptEl.textContent = pr; promptEl.style.display = pr && locked ? 'block' : 'none';
+    toastEl.textContent = tt; toastEl.style.display = tt ? 'block' : 'none';
+    taskEl.style.display = busy ? 'block' : 'none';
+    if (busy) { const o = rover?.busy ? rover : hab!; taskLbl.textContent = o.taskLabel; taskBar.style.width = (o.taskProgress * 100).toFixed(1) + '%'; }
   }
   const date = new Date(simMs), s = bodyDir('sun', date), e = bodyDir('earth', date);
   sunLive = s.live; sd.set(s.x, s.y, s.z); earthDir.set(e.x, e.y, e.z); earthEl = e.el;
-  const inside = hab ? hab.inHab(camera.position.x, camera.position.z) : false;
+  const inRover = !!rover && rover.inside, inside = (hab ? hab.inHab(camera.position.x, camera.position.z) : false) || inRover;
   ambK += ((inside ? 0.1 : 0.35) - ambK) * Math.min(1, dt * 3); amb.intensity = ambK;
 
   const px0 = camera.position.x, pz0 = camera.position.z;
-  if (locked && !hab?.busy) {
+  if (locked && !hab?.busy && !rover?.busy && rover?.mode !== 'driving') {
     const base = hab?.exposed ? 1.7 : 1.4, speed = keys.has('ShiftLeft') ? base * 1.9 : base;   // a person in a suit does not sprint
     fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw)); rgt.set(Math.cos(yaw), 0, -Math.sin(yaw)); mv.set(0, 0, 0);
     if (keys.has('KeyW')) mv.add(fwd); if (keys.has('KeyS')) mv.sub(fwd);
     if (keys.has('KeyD')) mv.add(rgt); if (keys.has('KeyA')) mv.sub(rgt);
     if (mv.lengthSq() > 0) mv.normalize().multiplyScalar(speed * dt);
     const nx = Math.max(-280, Math.min(280, camera.position.x + mv.x)), nz = Math.max(-280, Math.min(280, camera.position.z + mv.z));
-    const blk = (x: number, z: number) => (hab ? hab.blocked(x, z) : false) || propBlocked(x, z);
-    if (!blk(nx, camera.position.z)) camera.position.x = nx;
-    if (!blk(camera.position.x, nz)) camera.position.z = nz;
-    if (keys.has('Space') && onGround && !(hab && hab.inHab(camera.position.x, camera.position.z))) { vy = 2.2; onGround = false; }
+    if (rover?.mode === 'cabin') rover.walk(mv.x, mv.z);
+    else {
+      const blk = (x: number, z: number) => (hab ? hab.blocked(x, z) : false) || propBlocked(x, z) || (rover ? rover.blocks(x, z) : false);
+      if (!blk(nx, camera.position.z)) camera.position.x = nx;
+      if (!blk(camera.position.x, nz)) camera.position.z = nz;
+    }
+    if (!inRover && keys.has('Space') && onGround && !(hab && hab.inHab(camera.position.x, camera.position.z))) { vy = 2.2; onGround = false; }
   }
-  vy -= G * dt; camera.position.y += vy * dt;
-  const floor = heightAt(camera.position.x, camera.position.z) + EYE;
-  if (camera.position.y <= floor) { camera.position.y = floor; vy = 0; onGround = true; }
-  const vel = Math.hypot(camera.position.x - px0, camera.position.z - pz0) / Math.max(dt, 1e-4);
+  if (inRover && rover) {
+    rover.cameraPos(camera.position); vy = 0; onGround = true;
+    if (rover.mode === 'driving') { const base = rover.heading - Math.PI / 2; yaw = base + Math.max(-2.2, Math.min(2.2, wrapPi(yaw - base))); pitch = Math.max(-1.0, Math.min(0.9, pitch)); }
+  } else {
+    vy -= G * dt; camera.position.y += vy * dt;
+    const floor = heightAt(camera.position.x, camera.position.z) + EYE;
+    if (camera.position.y <= floor) { camera.position.y = floor; vy = 0; onGround = true; }
+  }
+  const vel = inRover ? 0 : Math.hypot(camera.position.x - px0, camera.position.z - pz0) / Math.max(dt, 1e-4);
   bobT += vel * dt * 2.1; const bk = onGround ? Math.min(1, vel / 1.2) : 0;
   camera.rotation.set(pitch + Math.sin(bobT * 2) * 0.0045 * bk, yaw, Math.sin(bobT) * 0.0035 * bk, 'YXZ');
   lamp.visible = !!hab && hab.exposed && hab.suitOn;

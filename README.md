@@ -34,6 +34,15 @@ To bake with no local tools: GitHub, Actions tab, "Bake LOLA terrain", Run workf
 
 Walk to the COMMS / OPS console in the Hab and press E. Commands: UPDATE, STATUS, HEALTH, WEATHER [city], SPACEWX, NEWS, POLITICS, or just talk. Replies take the real round-trip light delay, and need power and Earth above the horizon (checked against the terrain). The `api/comms` function fetches real headlines (BBC, NPR), weather (Open-Meteo) and the Kp index (NOAA SWPC), then has Groq write the operator's reply from those facts. Set `GROQ_API_KEY` in the Vercel project settings (optionally `GROQ_MODEL`). Without a key the console still answers with plain data-driven replies.
 
+## Lunar rover
+
+A six-wheel pressurised rover (modelled on the white faceted rover in the reference images) is parked on the pad. Walk to its port-side steps and press E to cycle the hatch (it also refuses to let you out without a sealed EVA suit). Inside: walk the cabin, press E at the driver's seat to drive (W/S throttle, A/D steer, Space brake, L headlamps, R radio), E at the rear rack for the rover radio, E at the door to exit.
+
+- Wheels follow the DEM individually (independent suspension, pitch and roll), dust flies in vacuum-correct arcs, the rover cannot climb slopes steeper than about 30 degrees or drive through the Hab, airlocks or props.
+- Battery (90 kWh): hotel load, lamps and traction drain it; park within about 13 m of the Hab to charge from the Hab battery. Battery shows on the HUD and the dash.
+- Radio: UHF to the Hab needs line of sight (checked against the terrain) and a live battery. In the rover terminal, `HAB <message>` talks to the Hab crew; every other command goes to Houston relayed through the Hab (needs the Hab's Earth link too). At the Hab console, `ROVER <message>` calls the rover when somebody is aboard. Replies come from the same Groq-backed `api/comms` function.
+- Rover mass, battery and speed figures are design placeholders.
+
 ## Deployment
 
 Hosted on Vercel from the main branch. Set `GROQ_API_KEY` for the comms operator and, optionally, `NASA_API_KEY` (a demo key is used otherwise) in the Vercel project settings.

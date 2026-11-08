@@ -76,6 +76,12 @@ export function isSunlit(p: V3, sun: V3): boolean {
   }
   return true;
 }
+/** True if terrain does not block the straight line between two points (used for radio links). */
+export function lineOfSight(a: V3, b: V3): boolean {
+  const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z, len = Math.hypot(dx, dy, dz), steps = Math.min(4000, Math.ceil(len / 6));
+  for (let i = 3; i < steps; i++) { const t = i / steps; if (heightAt(a.x + dx * t, a.z + dz * t) > a.y + dy * t) return false; }
+  return true;
+}
 export const rand = rnd;
 
 export type Site = { lat: number; lon: number; elevM: number; craterDir: { x: number; z: number } | null; litFraction: number | null };
