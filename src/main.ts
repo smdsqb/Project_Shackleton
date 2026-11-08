@@ -4,6 +4,7 @@ import { buildExterior, propBlocked } from './exterior';
 import { bodyDir, loadEphemeris } from './ephemeris';
 import { Sim, SIM } from './sim';
 import { Hab, WALL_H, CAP_H } from './hab';
+import { Player } from './player';
 import { Comms, type Link } from './comms';
 
 const MISSION_DAY0 = 214, EYE = 1.7, G = 1.62;
@@ -31,6 +32,7 @@ Object.assign(sun.shadow.camera, { left: -150, right: 150, top: 150, bottom: -15
 sun.shadow.bias = -0.0004;
 scene.add(sun, sun.target);
 const lamp = new THREE.SpotLight(0xffffff, 40, 45, 0.6, 0.5);
+lamp.castShadow = true; lamp.shadow.mapSize.set(1024, 1024); lamp.shadow.bias = -0.0005; lamp.visible = false; // helmet lamp: on only outside, in the suit
 lamp.target.position.set(0, 0, -1);
 camera.add(lamp, lamp.target);
 
@@ -53,7 +55,7 @@ function regolithTexture() {
     ng.putImageData(id, 0, 0); g.globalAlpha = a; g.drawImage(n, 0, 0, 512, 512);
   }
   const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(175, 175); t.anisotropy = 8; t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(175, 175); t.anisotropy = renderer.capabilities.getMaxAnisotropy(); t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
 
@@ -97,11 +99,14 @@ function buildWorld() {
   arrayPos.set(14, heightAt(14, 6) + 12, 6);
   buildExterior(scene, heightAt, arrayPos);
   camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE;
+  // ULTRA by default. Add ?quality=high to the address to drop the interior light shadows if the frame rate suffers.
+  if (/[?&]quality=high\b/.test(location.search)) scene.traverse((o) => { if ((o as THREE.PointLight).isPointLight) o.castShadow = false; });
 }
 
 // ---------- sim ----------
 const sim = new Sim();
 let hab: Hab | null = null;
+const player = new Player(scene, camera);
 let simMs = Date.now();
 const startMs = simMs;
 let flare = 'NONE', sunLive = false;
@@ -125,12 +130,13 @@ function telemetry() {
     missionDay: MISSION_DAY0 + Math.floor((simMs - startMs) / 86400000), simTime: new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
     batteryPct: (sim.batteryKwh / SIM.batteryCapKwh) * 100, genKw: sim.genKw, loadKw: SIM.loadKw, sunlit: sim.sunlit, o2Kg: sim.o2Kg, o2Days, co2: sim.co2,
     doseMsv: sim.doseMsv, doseRateMsvDay: SIM.surfaceDoseMsvPerDay * SIM.habShield * sim.radMult, flare, crew: SIM.crew,
-    location: hab?.where ?? '', suit: hab?.suitState ?? '', earthElDeg: earthEl * 57.2958,
+    location: hab?.where ?? '', suit: hab?.suitState ?? '', suitHours: hab?.suitHours ?? 0, earthElDeg: earthEl * 57.2958,
   };
 }
 const comms = new Comms({
   telemetry, link, now: () => new Date(simMs), delayS: () => SIM.commsDelayS,
   onClose: () => { renderer.domElement.requestPointerLock(); },
+  onPad: (open, lines, live) => player.setPad(lines, live && open),
 });
 
 // ---------- controls ----------
@@ -140,12 +146,13 @@ const intro = document.getElementById('intro')!, enter = document.getElementById
 enter.addEventListener('click', () => { renderer.domElement.requestPointerLock(); intro.classList.add('leaving'); });
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
+  if (!locked && comms.padOpen) comms.closePad();
   if (!locked && !comms.isOpen) { enter.textContent = 'RESUME'; intro.classList.remove('leaving'); keys.clear(); }
 });
 renderer.domElement.addEventListener('click', () => { if (!locked && !comms.isOpen && intro.classList.contains('leaving')) renderer.domElement.requestPointerLock(); });
 function openComms() { keys.clear(); document.exitPointerLock(); comms.open(); }
 addEventListener('mousemove', (e) => { if (!locked) return; yaw -= e.movementX * 0.0022; pitch = Math.max(-1.5, Math.min(1.5, pitch - e.movementY * 0.0022)); });
-addEventListener('keydown', (e) => { keys.add(e.code); if (e.code === 'KeyE' && locked) hab?.press(); });
+addEventListener('keydown', (e) => { keys.add(e.code); if (e.code === 'KeyE' && locked) hab?.press(); if (e.code === 'KeyC' && locked && !e.repeat && !comms.isOpen) void comms.togglePad(); });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
@@ -169,6 +176,7 @@ function drawHud(az: number, el: number) {
     row('CREW DOSE', `${sim.doseMsv.toFixed(3)} mSv`, cls(sim.radMult > 1)) +
     row('FLARES (3 D)', flare, cls(sim.radMult > 1)) +
     row('COMMS DELAY', `${SIM.commsDelayS.toFixed(2)} s one-way`) +
+    row('RADIO', comms.padOpen ? 'OPEN · TAB TO CLOSE' : 'PRESS C TO CALL HOUSTON') +
     row('EARTH LINK', SIM.commsAlwaysOn ? 'ONLINE · 24x7 TEST MODE' : link().up ? 'ACQUIRED' : 'LOS', link().up ? 'ok' : 'bad') +
     row('EARTH IN VIEW', earthVisible ? `YES · EL ${(earthEl * 57.2958).toFixed(1)}°` : 'NO · LINE OF SIGHT BLOCKED', earthVisible ? 'ok' : 'warn') +
     (hab ? hab.status().map(([k, v, c]) => row(k, v, c)).join('') : '');
@@ -176,7 +184,7 @@ function drawHud(az: number, el: number) {
 
 // ---------- loop ----------
 const clock = new THREE.Clock();
-let hudT = 0, litT = 0;
+let hudT = 0, litT = 0, bobT = 0;
 const fwd = new THREE.Vector3(), rgt = new THREE.Vector3(), mv = new THREE.Vector3(), sd = new THREE.Vector3();
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -195,8 +203,9 @@ function frame() {
   const inside = hab ? hab.inHab(camera.position.x, camera.position.z) : false;
   ambK += ((inside ? 0.1 : 0.35) - ambK) * Math.min(1, dt * 3); amb.intensity = ambK;
 
+  const px0 = camera.position.x, pz0 = camera.position.z;
   if (locked && !hab?.busy) {
-    const speed = keys.has('ShiftLeft') ? 6 : 3;
+    const base = hab?.exposed ? 1.7 : 1.4, speed = keys.has('ShiftLeft') ? base * 1.9 : base;   // a person in a suit does not sprint
     fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw)); rgt.set(Math.cos(yaw), 0, -Math.sin(yaw)); mv.set(0, 0, 0);
     if (keys.has('KeyW')) mv.add(fwd); if (keys.has('KeyS')) mv.sub(fwd);
     if (keys.has('KeyD')) mv.add(rgt); if (keys.has('KeyA')) mv.sub(rgt);
@@ -205,12 +214,16 @@ function frame() {
     const blk = (x: number, z: number) => (hab ? hab.blocked(x, z) : false) || propBlocked(x, z);
     if (!blk(nx, camera.position.z)) camera.position.x = nx;
     if (!blk(camera.position.x, nz)) camera.position.z = nz;
-    if (keys.has('Space') && onGround && !(hab && hab.inHab(camera.position.x, camera.position.z))) { vy = 2.6; onGround = false; }
+    if (keys.has('Space') && onGround && !(hab && hab.inHab(camera.position.x, camera.position.z))) { vy = 2.2; onGround = false; }
   }
   vy -= G * dt; camera.position.y += vy * dt;
   const floor = heightAt(camera.position.x, camera.position.z) + EYE;
   if (camera.position.y <= floor) { camera.position.y = floor; vy = 0; onGround = true; }
-  camera.rotation.set(pitch, yaw, 0, 'YXZ');
+  const vel = Math.hypot(camera.position.x - px0, camera.position.z - pz0) / Math.max(dt, 1e-4);
+  bobT += vel * dt * 2.1; const bk = onGround ? Math.min(1, vel / 1.2) : 0;
+  camera.rotation.set(pitch + Math.sin(bobT * 2) * 0.0045 * bk, yaw, Math.sin(bobT) * 0.0035 * bk, 'YXZ');
+  lamp.visible = !!hab && hab.exposed && hab.suitOn;
+  player.update(dt, camera.position, yaw, vel, onGround, !!hab?.suitOn, comms.padOpen, !!hab?.exposed);
 
   sun.position.copy(camera.position).addScaledVector(sd, 600);
   sun.target.position.copy(camera.position);
