@@ -5,7 +5,6 @@ import { bodyDir, loadEphemeris } from './ephemeris';
 import { Sim, SIM } from './sim';
 import { Hab, WALL_H, CAP_H } from './hab';
 import { Comms, type Link } from './comms';
-import { Rover } from './rover';
 
 const MISSION_DAY0 = 214, EYE = 1.7, G = 1.62;
 
@@ -97,16 +96,12 @@ function buildWorld() {
   dishPos.set(0, gy + WALL_H + CAP_H + 0.9, 0);
   arrayPos.set(14, heightAt(14, 6) + 12, 6);
   buildExterior(scene, heightAt, arrayPos);
-  // LSR-1 Lunar Surface Rover: parked on the sintered pad, just off Airlock 1's outer hatch,
-  // so the EVA traverse from the hab door to the rover door is short.
-  rover = new Rover(scene, heightAt, 9.5, 4.2, sim);
   camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE;
 }
 
 // ---------- sim ----------
 const sim = new Sim();
 let hab: Hab | null = null;
-let rover: Rover | null = null;
 let simMs = Date.now();
 const startMs = simMs;
 let flare = 'NONE', sunLive = false;
@@ -120,43 +115,18 @@ function nextAos(): string {
 }
 function link(): Link {
   if (SIM.commsAlwaysOn) return { up: true, reason: '' };
-  // When the player is in the rover, the relay path is LSR-1 UHF -> Hab dish -> Earth.
-  // The Hab side of that chain must already be up, or there is no link at all.
-  if (rover?.inRover) {
-    if (rover.batteryKwh <= 0.05) return { up: false, reason: 'LSR-1 BATTERY DEPLETED.' };
-    if (!rover.hasHabLink) return { up: false, reason: 'NO UHF LINE OF SIGHT TO THE HAB DISH.' + (rover.distHab < 250 ? '' : ' ROVER HAS DRIVEN BEYOND RELAY RANGE.') };
-    if (!(sim.batteryKwh > 0 || sim.genKw >= SIM.loadKw)) return { up: false, reason: 'HAB COMMS RACK HAS NO POWER.' };
-    if (!earthVisible) return { up: false, reason: (earthEl > 0.003 ? 'EARTH IS MASKED BY TERRAIN FROM THE HAB.' : 'EARTH IS BELOW THE LUNAR HORIZON.') + nextAos() };
-    return { up: true, reason: '' };
-  }
   if (!(sim.batteryKwh > 0 || sim.genKw >= SIM.loadKw)) return { up: false, reason: 'THE COMMS RACK HAS NO POWER.' };
   if (!earthVisible) return { up: false, reason: (earthEl > 0.003 ? 'EARTH IS MASKED BY TERRAIN.' : 'EARTH IS BELOW THE LUNAR HORIZON.') + nextAos() };
   return { up: true, reason: '' };
 }
 function telemetry() {
   const o2Days = sim.o2Kg / (SIM.crew * SIM.o2KgPerCrewDay);
-  const base = {
+  return {
     missionDay: MISSION_DAY0 + Math.floor((simMs - startMs) / 86400000), simTime: new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
     batteryPct: (sim.batteryKwh / SIM.batteryCapKwh) * 100, genKw: sim.genKw, loadKw: SIM.loadKw, sunlit: sim.sunlit, o2Kg: sim.o2Kg, o2Days, co2: sim.co2,
     doseMsv: sim.doseMsv, doseRateMsvDay: SIM.surfaceDoseMsvPerDay * SIM.habShield * sim.radMult, flare, crew: SIM.crew,
     location: hab?.where ?? '', suit: hab?.suitState ?? '', earthElDeg: earthEl * 57.2958,
   };
-  if (rover?.inRover) {
-    // LSR-1 telemetry is sent through the Hab relay. CAPCOM should see the rover fields.
-    return {
-      ...base,
-      location: `LSR-1 · ${rover.where}`,
-      suit: 'EVA · SEALED',
-      roverSpeed: rover.speed,
-      roverOdometer: rover.odometer,
-      roverBatteryPct: rover.batteryPct,
-      roverDistHab: rover.distHab,
-      roverArm: rover.armStage,
-      roverCabinKpa: rover.lockP,
-      relayPath: 'LSR-1 UHF -> HAB DISH -> EARTH',
-    };
-  }
-  return base;
 }
 const comms = new Comms({
   telemetry, link, now: () => new Date(simMs), delayS: () => SIM.commsDelayS,
@@ -175,23 +145,7 @@ document.addEventListener('pointerlockchange', () => {
 renderer.domElement.addEventListener('click', () => { if (!locked && !comms.isOpen && intro.classList.contains('leaving')) renderer.domElement.requestPointerLock(); });
 function openComms() { keys.clear(); document.exitPointerLock(); comms.open(); }
 addEventListener('mousemove', (e) => { if (!locked) return; yaw -= e.movementX * 0.0022; pitch = Math.max(-1.5, Math.min(1.5, pitch - e.movementY * 0.0022)); });
-addEventListener('keydown', (e) => {
-  keys.add(e.code);
-  if (!locked) return;
-  if (e.code === 'KeyE') {
-    // If the player is in the rover, E always exits. Otherwise, prefer the rover door prompt
-    // when the player is near it (so they don't have to fight the hab prompt), else fall back to the hab.
-    if (rover?.inRover) rover.press();
-    else if (rover && rover.prompt && !rover.busy) rover.press();
-    else hab?.press();
-  } else if (e.code === 'KeyR' && rover?.inRover) {
-    rover.toggleArm();
-  } else if (e.code === 'KeyF' && rover?.inRover && !comms.isOpen) {
-    // Open the comms terminal from the rover cockpit. The link() and telemetry() above already
-    // report rover-mode data while inRover is true, so the terminal behaves as a rover relay.
-    openComms();
-  }
-});
+addEventListener('keydown', (e) => { keys.add(e.code); if (e.code === 'KeyE' && locked) hab?.press(); });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
@@ -217,7 +171,6 @@ function drawHud(az: number, el: number) {
     row('COMMS DELAY', `${SIM.commsDelayS.toFixed(2)} s one-way`) +
     row('EARTH LINK', SIM.commsAlwaysOn ? 'ONLINE · 24x7 TEST MODE' : link().up ? 'ACQUIRED' : 'LOS', link().up ? 'ok' : 'bad') +
     row('EARTH IN VIEW', earthVisible ? `YES · EL ${(earthEl * 57.2958).toFixed(1)}°` : 'NO · LINE OF SIGHT BLOCKED', earthVisible ? 'ok' : 'warn') +
-    (rover?.inRover ? rover.status().map(([k, v, c]) => row(k, v, c)).join('') : '') +
     (hab ? hab.status().map(([k, v, c]) => row(k, v, c)).join('') : '');
 }
 
@@ -231,40 +184,6 @@ function frame() {
   sim.step(dt * SIM.timeRate);
   if (hab) {
     hab.update(dt, dt * SIM.timeRate, camera.position, sim);
-    visorEl.classList.toggle('on', hab.suitOn);
-  }
-  if (rover) {
-    // The rover needs the sun direction for its solar array, the player position for proximity prompts,
-    // and the key set + mouse-look yaw for driving. While the player is in the rover, WASD drives the rover
-    // and the camera is locked to the cockpit, so we DON'T run the walking block below in that case.
-    rover.update(dt, dt * SIM.timeRate, camera.position, sim, keys, yaw, sd);
-    promptEl.textContent = rover.inRover ? rover.prompt : (rover.prompt || hab?.prompt || '');
-    promptEl.style.display = promptEl.textContent && locked ? 'block' : 'none';
-    const toast = rover.inRover ? rover.toast : (rover.toast || hab?.toast || '');
-    toastEl.textContent = toast; toastEl.style.display = toast ? 'block' : 'none';
-    const busy = rover.inRover ? rover.busy : (rover.busy || hab?.busy || false);
-    taskEl.style.display = busy ? 'block' : 'none';
-    if (busy) { const lbl = rover.inRover ? rover.taskLabel : (rover.taskLabel || hab?.taskLabel || ''); const prog = rover.inRover ? rover.taskProgress : (rover.taskProgress || hab?.taskProgress || 0);
-      taskLbl.textContent = lbl; taskBar.style.width = (prog * 100).toFixed(1) + '%'; }
-    if (rover.inRover) {
-      // place the camera at the cockpit each frame, oriented along the rover heading + the player's mouse-look yaw
-      const cockpit = new THREE.Vector3(); rover.cockpitCameraPosition(cockpit);
-      camera.position.copy(cockpit);
-      // mouse-look yaw is the player's view direction inside the cockpit; rover.heading is the drive direction.
-      // We add them so the player can look around within the cockpit freely while driving forward.
-      camera.rotation.set(pitch, yaw, 0, 'YXZ');
-    } else {
-      // when the player is not in the rover, the hab code path runs and may also be showing a prompt
-      if (hab) {
-        promptEl.textContent = rover.prompt || hab.prompt;
-        toastEl.textContent = rover.toast || hab.toast;
-        taskEl.style.display = (rover.busy || hab.busy) ? 'block' : 'none';
-        if (rover.busy || hab.busy) { taskLbl.textContent = rover.taskLabel || hab.taskLabel; taskBar.style.width = ((rover.taskProgress || hab.taskProgress || 0) * 100).toFixed(1) + '%'; }
-        visorEl.classList.toggle('on', hab.suitOn);
-      }
-    }
-  } else if (hab) {
-    hab.update(dt, dt * SIM.timeRate, camera.position, sim);
     promptEl.textContent = hab.prompt; promptEl.style.display = hab.prompt && locked ? 'block' : 'none';
     toastEl.textContent = hab.toast; toastEl.style.display = hab.toast ? 'block' : 'none';
     taskEl.style.display = hab.busy ? 'block' : 'none';
@@ -274,27 +193,24 @@ function frame() {
   const date = new Date(simMs), s = bodyDir('sun', date), e = bodyDir('earth', date);
   sunLive = s.live; sd.set(s.x, s.y, s.z); earthDir.set(e.x, e.y, e.z); earthEl = e.el;
   const inside = hab ? hab.inHab(camera.position.x, camera.position.z) : false;
-  ambK += ((inside || (rover?.inRover ?? false) ? 0.1 : 0.35) - ambK) * Math.min(1, dt * 3); amb.intensity = ambK;
+  ambK += ((inside ? 0.1 : 0.35) - ambK) * Math.min(1, dt * 3); amb.intensity = ambK;
 
-  // walking movement is skipped while the player is in the rover (the rover drives instead)
-  if (locked && !hab?.busy && !rover?.busy && !(rover?.inRover)) {
+  if (locked && !hab?.busy) {
     const speed = keys.has('ShiftLeft') ? 6 : 3;
     fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw)); rgt.set(Math.cos(yaw), 0, -Math.sin(yaw)); mv.set(0, 0, 0);
     if (keys.has('KeyW')) mv.add(fwd); if (keys.has('KeyS')) mv.sub(fwd);
     if (keys.has('KeyD')) mv.add(rgt); if (keys.has('KeyA')) mv.sub(rgt);
     if (mv.lengthSq() > 0) mv.normalize().multiplyScalar(speed * dt);
     const nx = Math.max(-280, Math.min(280, camera.position.x + mv.x)), nz = Math.max(-280, Math.min(280, camera.position.z + mv.z));
-    const blk = (x: number, z: number) => (hab ? hab.blocked(x, z) : false) || propBlocked(x, z) || (rover ? rover.blocked(x, z) : false);
+    const blk = (x: number, z: number) => (hab ? hab.blocked(x, z) : false) || propBlocked(x, z);
     if (!blk(nx, camera.position.z)) camera.position.x = nx;
     if (!blk(camera.position.x, nz)) camera.position.z = nz;
     if (keys.has('Space') && onGround && !(hab && hab.inHab(camera.position.x, camera.position.z))) { vy = 2.6; onGround = false; }
   }
-  if (!(rover?.inRover)) {
-    vy -= G * dt; camera.position.y += vy * dt;
-    const floor = heightAt(camera.position.x, camera.position.z) + EYE;
-    if (camera.position.y <= floor) { camera.position.y = floor; vy = 0; onGround = true; }
-    camera.rotation.set(pitch, yaw, 0, 'YXZ');
-  }
+  vy -= G * dt; camera.position.y += vy * dt;
+  const floor = heightAt(camera.position.x, camera.position.z) + EYE;
+  if (camera.position.y <= floor) { camera.position.y = floor; vy = 0; onGround = true; }
+  camera.rotation.set(pitch, yaw, 0, 'YXZ');
 
   sun.position.copy(camera.position).addScaledVector(sd, 600);
   sun.target.position.copy(camera.position);
