@@ -40,12 +40,17 @@ function cleanTele(t: Record<string, unknown> = {}) {
     missionDay: num(t.missionDay, 0, 99999), simTime: str(t.simTime, 40), batteryPct: num(t.batteryPct, 0, 100), genKw: num(t.genKw, 0, 1000), loadKw: num(t.loadKw, 0, 1000),
     sunlit: !!t.sunlit, o2Kg: num(t.o2Kg, 0, 99999), o2Days: num(t.o2Days, 0, 99999), co2: num(t.co2, 0, 1000), doseMsv: num(t.doseMsv, 0, 99999), doseRateMsvDay: num(t.doseRateMsvDay, 0, 9999),
     flare: str(t.flare, 12) || 'NONE', crew: num(t.crew, 0, 99, 4), location: str(t.location, 24), suit: str(t.suit, 16), earthElDeg: num(t.earthElDeg, -90, 90),
+    // LSR-1 rover fields — present when the crew is calling from the pressurised rover, relayed through the Hab dish
+    roverSpeed: num(t.roverSpeed, -50, 50), roverOdometer: num(t.roverOdometer, 0, 99999), roverBatteryPct: num(t.roverBatteryPct, 0, 100), roverDistHab: num(t.roverDistHab, 0, 99999),
+    roverArm: num(t.roverArm, 0, 5, 0), roverCabinKpa: num(t.roverCabinKpa, 0, 200), relayPath: str(t.relayPath, 60),
   };
 }
-const emergency = (t: Tele) => t.batteryPct < 10 || t.o2Days < 15 || t.co2 > 6;
-const teleLine = (t: Tele) => `Mission day ${t.missionDay}. Crew ${t.crew}. Battery ${t.batteryPct.toFixed(0)}%. Solar ${t.genKw.toFixed(1)} kW vs load ${t.loadKw.toFixed(1)} kW (array ${t.sunlit ? 'sunlit' : 'in shadow'}). O2 ${t.o2Kg.toFixed(0)} kg (${t.o2Days.toFixed(0)} days). CO2 ${t.co2.toFixed(2)} mmHg. Cumulative dose ${t.doseMsv.toFixed(3)} mSv, current rate ${t.doseRateMsvDay.toFixed(2)} mSv/day. Strongest flare in last 3 days: ${t.flare}. Earth elevation ${t.earthElDeg.toFixed(1)} deg.`;
+const emergency = (t: Tele) => t.batteryPct < 10 || t.o2Days < 15 || t.co2 > 6 || t.roverBatteryPct < 12;
+const teleLine = (t: Tele) => `Mission day ${t.missionDay}. Crew ${t.crew}. Battery ${t.batteryPct.toFixed(0)}%. Solar ${t.genKw.toFixed(1)} kW vs load ${t.loadKw.toFixed(1)} kW (array ${t.sunlit ? 'sunlit' : 'in shadow'}). O2 ${t.o2Kg.toFixed(0)} kg (${t.o2Days.toFixed(0)} days). CO2 ${t.co2.toFixed(2)} mmHg. Cumulative dose ${t.doseMsv.toFixed(3)} mSv, current rate ${t.doseRateMsvDay.toFixed(2)} mSv/day. Strongest flare in last 3 days: ${t.flare}. Earth elevation ${t.earthElDeg.toFixed(1)} deg.` +
+  (t.location.startsWith('LSR-1') ? ` Crew is in the pressurised rover LSR-1 at ${t.roverSpeed.toFixed(1)} m/s, ${t.roverDistHab.toFixed(0)} m from the outpost. Rover battery ${t.roverBatteryPct.toFixed(0)}%, cabin ${t.roverCabinKpa.toFixed(0)} kPa, arm stage ${t.roverArm}. Relay path: ${t.relayPath}.` : '');
 
 const SYSTEM = (role: string, today: string, emerg: boolean) => `You are the ${role} console at Houston Mission Control, talking to the crew of Project Shackleton, a lunar south pole outpost, over a delayed radio link. Today on Earth is ${today}. This is a training simulator for kids and teens, and you are a simulated controller: if the crew sincerely asks whether you are real, say so plainly and in a friendly way.
+The crew may be calling from the pressurised Lunar Surface Rover LSR-1, in which case the call is relayed LSR-1 UHF -> outpost dish -> Earth. Acknowledge the relay briefly on first contact ("copy your relay through Shackleton"), then move on. The rover is crewed by one EVA-suited astronaut and cannot go faster than walking pace.
 STYLE
 - Real radio protocol: open with "Shackleton, Houston." (add your console, for example "Houston, Surgeon." for the flight surgeon), use "copy", "roger", "standby", "say again", close with "Houston out." or "over".
 - Plain text only. No markdown, no lists, no emoji. At most 90 words (up to 120 for news).
