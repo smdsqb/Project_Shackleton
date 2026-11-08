@@ -29,3 +29,18 @@ Hosted on Vercel from the main branch. Set `GROQ_API_KEY` for the comms operator
 ## The Hab
 
 A rigid, painted-aluminium surface habitat: radiused drum and dome (~155 m2 floor) with panel seams, a gold thermal-blanket skirt, portholes, curved-roof airlocks with interlocked hatches, racks for the oxygenator, atmospheric regulator and water reclaimer, and quarters for a crew of five. Interior is soft-edged and NASA-branded (blue band, plates, meatball). Outside: sintered pad, dish, solar array, tanks, batteries, radiator, flag. The meatball and worm are stylised canvas recreations; swap in official art from the NASA Brand Center before release. Airlock timings and costs are design placeholders.
+
+## The Rover — LSR-1 "Shackleton"
+
+A six-wheel pressurised Lunar Surface Rover parked on the sintered pad just off Airlock 1. Modelled on the NASA concept imagery: a white, faceted hexagonal cabin with angular pentagonal windows and a gold MLI skirt, six yellow-hubbed off-road wheels on a rocker-bogie style undercarriage, a deployable two-wing solar array on the roof, a high-gain dish plus two UHF whip antennas and a patch antenna, LED flood strips and twin headlight pods with real spotlights, a black 6-DOF articulated robotic arm with a coring drill and scoop end-effector on the starboard side, a rear airlock with a docking collar and liftgate hatch, a sample cache box on the rear deck, and an interior cockpit with a driver's seat, yoke and two live telemetry screens.
+
+To use it: don the EVA suit in the Hab (about 30 s), cycle Airlock 1 to vacuum, step out onto the pad, walk to the rover's rear hatch, and press E. A six-stage ingress sequence cycles the rover airlock and seats you at the cockpit. From the cockpit:
+
+- **W / S** — throttle forward / reverse (cap 3 m/s, ~10.8 km/h, lunar-rover pace)
+- **A / D** — steer left / right (front and rear axles both steer, like the LRV)
+- **mouse** — look around the cockpit freely; the rover drives along its own heading independently of where you're looking
+- **R** — toggle the robotic arm: STOWED → AT READY → SAMPLING → STOWING → STOWED
+- **F** — open the comms terminal; the link routes LSR-1 UHF → Hab dish → Earth (DSN)
+- **E** — begin the egress sequence; the rover airlock cycles you back out onto the pad in your suit
+
+The rover has its own battery (12 kWh), roof solar array (0.72 kW nominal, scaled by sun elevation), cabin O2 reserve (1.4 kg), drive motors that draw power proportional to speed, and a cabin-pressure state machine. Driving beyond ~60 m from the Hab loses the UHF line-of-sight relay and the Earth link goes down — bring it back into range to talk to Houston. The Hab Earth-link rules still apply on top: if the Hab has no power or Earth is below the horizon, the relay is dead regardless of rover state.
