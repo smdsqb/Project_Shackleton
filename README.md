@@ -55,3 +55,7 @@ A rigid, painted-aluminium surface habitat: radiused drum and dome (~155 m2 floo
 
 Press C to call Houston. Static comes up, a female link-manager voice brings the link up, then you chat through the wrist pad and Houston answers in a male voice. The Hab comms desk gives the same conversation as text only.
 Houston's brain and both voices use the GROQ_API_KEY environment variable on Vercel. Optional overrides: GROQ_TTS_FEMALE, GROQ_TTS_MALE, GROQ_TTS_MODEL. If the voice service is unavailable the browser's built-in voices are used.
+
+### Voices
+
+The radio voices come from /api/tts, which tries the providers you have keys for, best first: ElevenLabs (ELEVENLABS_API_KEY), Runway (RUNWAYML_API_SECRET), OpenAI (OPENAI_API_KEY), then Groq (GROQ_API_KEY). Force an order with TTS_ORDER, for example "elevenlabs,openai,groq". Voice choices have environment overrides (ELEVENLABS_VOICE_MALE, ELEVENLABS_VOICE_FEMALE, RUNWAY_VOICE_MALE, RUNWAY_VOICE_FEMALE, OPENAI_VOICE_MALE, OPENAI_VOICE_FEMALE). If every provider fails the browser's built-in voices are used.
