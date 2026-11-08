@@ -5,7 +5,10 @@ import { Rover } from './rover';
 import { bodyDir, loadEphemeris } from './ephemeris';
 import { Sim, SIM } from './sim';
 import { Hab, WALL_H, CAP_H } from './hab';
+import { Player } from './player';
 import { Comms, type Link } from './comms';
+import { Director } from './events';
+import { UI, ensureAudio } from './ui';
 
 const MISSION_DAY0 = 214, EYE = 1.7, G = 1.62;
 
@@ -32,6 +35,7 @@ Object.assign(sun.shadow.camera, { left: -150, right: 150, top: 150, bottom: -15
 sun.shadow.bias = -0.0004;
 scene.add(sun, sun.target);
 const lamp = new THREE.SpotLight(0xffffff, 40, 45, 0.6, 0.5);
+lamp.castShadow = true; lamp.shadow.mapSize.set(1024, 1024); lamp.shadow.bias = -0.0005; lamp.visible = false; // helmet lamp: on only outside, in the suit
 lamp.target.position.set(0, 0, -1);
 camera.add(lamp, lamp.target);
 
@@ -54,7 +58,7 @@ function regolithTexture() {
     ng.putImageData(id, 0, 0); g.globalAlpha = a; g.drawImage(n, 0, 0, 512, 512);
   }
   const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(175, 175); t.anisotropy = 8; t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(175, 175); t.anisotropy = renderer.capabilities.getMaxAnisotropy(); t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
 
@@ -100,12 +104,17 @@ function buildWorld() {
   rover = new Rover(scene, (x, z, r) => (hab ? hab.solid(x, z, r) : false) || propHit(x, z, r), () => dishPos);
   rover.onRadio = () => openComms('rover');
   camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE;
+  // ULTRA by default. Add ?quality=high to the address to drop the interior light shadows if the frame rate suffers.
+  if (/[?&]quality=high\b/.test(location.search)) scene.traverse((o) => { if ((o as THREE.PointLight).isPointLight) o.castShadow = false; });
 }
 
 // ---------- sim ----------
 const sim = new Sim();
+const dir = new Director(sim);
 let hab: Hab | null = null;
 let rover: Rover | null = null;
+let started = false;
+const player = new Player(scene, camera);
 let simMs = Date.now();
 const startMs = simMs;
 let flare = 'NONE', sunLive = false;
@@ -118,23 +127,25 @@ function nextAos(): string {
   return '';
 }
 function link(): Link {
+  if (!sim.antennaOk) return { up: false, reason: 'THE ANTENNA GIMBAL IS JAMMED. NO LINK UNTIL IT IS REPAIRED.' };
   if (SIM.commsAlwaysOn) return { up: true, reason: '' };
-  if (!(sim.batteryKwh > 0 || sim.genKw >= SIM.loadKw)) return { up: false, reason: 'THE COMMS RACK HAS NO POWER.' };
+  if (!(sim.batteryKwh > 0 || sim.genKw >= sim.loadKw)) return { up: false, reason: 'THE COMMS RACK HAS NO POWER.' };
   if (!earthVisible) return { up: false, reason: (earthEl > 0.003 ? 'EARTH IS MASKED BY TERRAIN.' : 'EARTH IS BELOW THE LUNAR HORIZON.') + nextAos() };
   return { up: true, reason: '' };
 }
 function telemetry() {
-  const o2Days = sim.o2Kg / (SIM.crew * SIM.o2KgPerCrewDay);
+  const o2Days = sim.o2Days;
   return {
-    missionDay: MISSION_DAY0 + Math.floor((simMs - startMs) / 86400000), simTime: new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
-    batteryPct: (sim.batteryKwh / SIM.batteryCapKwh) * 100, genKw: sim.genKw, loadKw: SIM.loadKw, sunlit: sim.sunlit, o2Kg: sim.o2Kg, o2Days, co2: sim.co2,
-    doseMsv: sim.doseMsv, doseRateMsvDay: SIM.surfaceDoseMsvPerDay * SIM.habShield * sim.radMult, flare, crew: SIM.crew,
-    location: hab?.where ?? '', suit: hab?.suitState ?? '', earthElDeg: earthEl * 57.2958,
+    missionDay: MISSION_DAY0 + Math.floor(sim.t / 24), simTime: new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
+    batteryPct: (sim.batteryKwh / SIM.batteryCapKwh) * 100, genKw: sim.genKw, loadKw: sim.loadKw, sunlit: sim.sunlit, o2Kg: sim.o2Kg, o2Days, co2: sim.co2,
+    doseMsv: sim.doseMsv, doseRateMsvDay: sim.doseRateMsvH * 24, flare, crew: SIM.crew, alerts: sim.alerts().map((a) => a.text).join('; '), pressureKpa: sim.pressureKpa, tempC: sim.tempC, health: sim.health, ppO2: sim.ppO2,
+    location: hab?.where ?? '', suit: hab?.suitState ?? '', suitHours: hab?.suitHours ?? 0, earthElDeg: earthEl * 57.2958,
   };
 }
 const comms = new Comms({
   telemetry, link, now: () => new Date(simMs), delayS: () => SIM.commsDelayS,
   onClose: () => { renderer.domElement.requestPointerLock(); },
+  onPad: (open, lines, live) => player.setPad(lines, live && open),
   rover: { telemetry: () => rover?.telemetry(), link: () => rover?.habLink() ?? { up: false, dist: 0, reason: 'THERE IS NO ROVER.' }, occupied: () => !!rover && rover.inside },
 });
 
@@ -142,21 +153,31 @@ const comms = new Comms({
 let yaw = -Math.PI / 2, pitch = 0, vy = 0, onGround = true, locked = false;
 const keys = new Set<string>();
 const intro = document.getElementById('intro')!, enter = document.getElementById('enter') as HTMLButtonElement;
-enter.addEventListener('click', () => { renderer.domElement.requestPointerLock(); intro.classList.add('leaving'); });
+enter.addEventListener('click', () => { started = true; ensureAudio(); renderer.domElement.requestPointerLock(); intro.classList.add('leaving'); });
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
-  if (!locked && !comms.isOpen) { enter.textContent = 'RESUME'; intro.classList.remove('leaving'); keys.clear(); }
+  if (!locked && comms.padOpen) comms.closePad();
+  if (!locked && !comms.isOpen && !ui.isTabletOpen) { enter.textContent = 'RESUME'; intro.classList.remove('leaving'); keys.clear(); }
 });
-renderer.domElement.addEventListener('click', () => { if (!locked && !comms.isOpen && intro.classList.contains('leaving')) renderer.domElement.requestPointerLock(); });
+renderer.domElement.addEventListener('click', () => { if (!locked && !comms.isOpen && !ui.isTabletOpen && intro.classList.contains('leaving')) renderer.domElement.requestPointerLock(); });
 function openComms(mode: 'hab' | 'rover' = 'hab') { keys.clear(); document.exitPointerLock(); comms.open(mode); }
 addEventListener('mousemove', (e) => { if (!locked) return; yaw -= e.movementX * 0.0022; pitch = Math.max(-1.5, Math.min(1.5, pitch - e.movementY * 0.0022)); });
 addEventListener('keydown', (e) => {
-  keys.add(e.code); if (!locked) return;
+  if (comms.isOpen) return;
+  ensureAudio();
+  const dg = e.code.startsWith('Digit') ? +e.code.slice(5) : 0;
+  if (dir.active && dg >= 1 && dg <= dir.active.choices.length) { dir.resolve(dg - 1); return; }
+  if (dir.active && e.code === 'KeyH') { ui.ask(); return; }
+  if (ui.isTabletOpen) { if (e.code === 'KeyM' || e.code === 'Escape') ui.close(); return; }
+  keys.add(e.code);
+  if (!locked) return;
   if (e.code === 'KeyE') { if (rover?.hasPrompt) rover.press(); else hab?.press(); }
-  if (e.code === 'KeyL' && rover?.inside) rover.toggleLights();
-  if (e.code === 'KeyR' && rover?.mode === 'driving') rover.onRadio?.();
+  else if (e.code === 'KeyL' && rover?.inside) rover.toggleLights();
+  else if (e.code === 'KeyR' && rover?.mode === 'driving') rover.onRadio?.();
+  else if (e.code === 'KeyC' && !e.repeat) { if (rover?.inside) rover.onRadio?.(); else void comms.togglePad(); }
+  else if (e.code === 'KeyM') { keys.clear(); document.exitPointerLock(); ui.open(); }
+  else if (e.code === 'KeyP') sim.setArray(sim.arrayMode === 'deployed' ? 'retracted' : 'deployed');
 });
-const wrapPi = (a: number) => ((((a + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) - Math.PI;
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
@@ -165,21 +186,30 @@ const taskEl = document.getElementById('task')!, taskLbl = taskEl.querySelector(
 const hud = document.getElementById('hud')!, promptEl = document.getElementById('prompt')!, toastEl = document.getElementById('toast')!;
 const cls = (v: boolean, bad = false) => (v ? (bad ? 'bad' : 'warn') : 'ok');
 const row = (k: string, v: string, c = 'ok') => `<div class="row"><span class="k">${k}</span><span class="${c}">${v}</span></div>`;
+const wrapPi = (a: number) => ((((a + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) - Math.PI;
+const ui = new UI({
+  sim, dir, openComms: () => openComms(), clockText: () => new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC', flare: () => flare,
+  onTabletClose: () => { renderer.domElement.requestPointerLock(); },
+});
+// one fixed clock; it eases to 60x by itself while a decision card is open or someone is on EVA, so nothing outruns the player
+function clockRate() { const slow = dir.active || hab?.busy || hab?.suitOn || sim.cmdExposed || rover?.inside || rover?.busy; return slow ? 60 : SIM.timeRate; }
 function drawHud(az: number, el: number) {
-  const day = MISSION_DAY0 + Math.floor((simMs - startMs) / 86400000);
-  const o2Days = sim.o2Kg / (SIM.crew * SIM.o2KgPerCrewDay);
+  const day = MISSION_DAY0 + Math.floor(sim.t / 24), o2Days = sim.o2Days, b = (sim.batteryKwh / SIM.batteryCapKwh) * 100;
   hud.innerHTML = `<h1>PROJECT SHACKLETON</h1>` +
-    row('SIM CLOCK', new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC') + row('MISSION DAY', String(day)) +
+    row('SIM CLOCK', new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC') + row('MISSION DAY', `${day} · ${(sim.t / 24).toFixed(1)} / ${SIM.missionDays}`) +
     row('SUN EL / AZ', `${(el * 57.2958).toFixed(2)}° / ${(az * 57.2958).toFixed(0)}°`) +
     row('SUN DATA', sunLive ? 'JPL HORIZONS' : 'APPROXIMATE', sunLive ? 'ok' : 'warn') +
     row('ARRAY', sim.sunlit ? 'SUNLIT' : 'SHADOW', sim.sunlit ? 'ok' : 'bad') +
-    row('POWER GEN / LOAD', `${sim.genKw.toFixed(1)} / ${SIM.loadKw.toFixed(1)} kW`, cls(sim.genKw < SIM.loadKw)) +
-    row('BATTERY', `${((sim.batteryKwh / SIM.batteryCapKwh) * 100).toFixed(1)} %`, cls(sim.batteryKwh < SIM.batteryCapKwh * 0.25, sim.batteryKwh <= 0)) +
-    row('O2 RESERVE', `${sim.o2Kg.toFixed(0)} kg · ${o2Days.toFixed(0)} d`, cls(o2Days < 60, o2Days < 15)) +
-    row('CO2', `${sim.co2.toFixed(2)} mmHg`, cls(sim.co2 > 3, sim.co2 > 6)) +
-    row('CREW DOSE', `${sim.doseMsv.toFixed(3)} mSv`, cls(sim.radMult > 1)) +
+    row('POWER GEN / LOAD', `${sim.genKw.toFixed(1)} / ${sim.loadKw.toFixed(1)} kW`, cls(sim.genKw < sim.loadKw)) +
+    row('BATTERY', `${b.toFixed(1)} %`, cls(b < 25, b < 10)) +
+    row('CABIN', `O2 ${sim.ppO2.toFixed(1)} kPa · ${sim.pressureKpa.toFixed(0)} kPa · ${sim.tempC.toFixed(0)} C`, cls(sim.ppO2 < 19.5 || sim.pressureKpa < 95, sim.ppO2 < 17)) +
+    row('O2 TANK', `${sim.o2Kg.toFixed(0)} kg · ${o2Days > 900 ? 'steady' : o2Days.toFixed(0) + ' d'}`, cls(o2Days < 40, o2Days < 15)) +
+    row('CO2', `${sim.co2.toFixed(2)} mmHg`, cls(sim.co2 > 4, sim.co2 > 6)) +
+    row('CREW HEALTH', `${sim.health.toFixed(0)} %`, cls(sim.health < 75, sim.health < 40)) +
+    row('CREW DOSE', `${sim.doseMsv.toFixed(2)} mSv · you ${sim.cmdDoseMsv.toFixed(2)}`, cls(sim.doseMsv > 125, sim.doseMsv > 250)) +
     row('FLARES (3 D)', flare, cls(sim.radMult > 1)) +
     row('COMMS DELAY', `${SIM.commsDelayS.toFixed(2)} s one-way`) +
+    row('RADIO', comms.padOpen ? 'OPEN · TAB TO CLOSE' : 'PRESS C TO CALL HOUSTON') +
     row('EARTH LINK', SIM.commsAlwaysOn ? 'ONLINE · 24x7 TEST MODE' : link().up ? 'ACQUIRED' : 'LOS', link().up ? 'ok' : 'bad') +
     row('EARTH IN VIEW', earthVisible ? `YES · EL ${(earthEl * 57.2958).toFixed(1)}°` : 'NO · LINE OF SIGHT BLOCKED', earthVisible ? 'ok' : 'warn') +
     (hab ? hab.status().map(([k, v, c]) => row(k, v, c)).join('') : '') +
@@ -188,19 +218,20 @@ function drawHud(az: number, el: number) {
 
 // ---------- loop ----------
 const clock = new THREE.Clock();
-let hudT = 0, litT = 0;
+let hudT = 0, litT = 0, bobT = 0;
 const fwd = new THREE.Vector3(), rgt = new THREE.Vector3(), mv = new THREE.Vector3(), sd = new THREE.Vector3();
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
-  simMs += dt * SIM.timeRate * 1000;
-  sim.step(dt * SIM.timeRate);
+  const running = started && (locked || comms.isOpen || ui.isTabletOpen), w = clockRate(), dtSim = running ? dt * w : 0;
+  simMs += dtSim * 1000; sim.cmdExposed = hab?.exposed ?? false;
+  sim.step(dtSim); dir.frame(dtSim / 3600, running ? dt : 0); ui.frame(dt);
   if (hab) {
     hab.shelter = !!rover && rover.inside;
-    hab.update(dt, dt * SIM.timeRate, camera.position, sim);
+    hab.update(dt, Math.min(dtSim, dt * 60), camera.position, sim);
     visorEl.classList.toggle('on', hab.suitOn);
   }
   if (rover && hab) {
-    const r = rover.update(dt, dt * SIM.timeRate, { player: camera.position, suitOn: hab.suitOn, keys, sim, hab: dishPos });
+    const r = rover.update(dt, Math.min(dtSim, dt * 60), { player: camera.position, suitOn: hab.suitOn, keys, sim, hab: dishPos });
     yaw += r.dHeading;
     if (rover.pendingExit) { camera.position.x = rover.pendingExit.x; camera.position.z = rover.pendingExit.y; camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE; vy = 0; yaw = rover.heading + Math.PI; rover.pendingExit = null; }
   }
@@ -216,8 +247,9 @@ function frame() {
   const inRover = !!rover && rover.inside, inside = (hab ? hab.inHab(camera.position.x, camera.position.z) : false) || inRover;
   ambK += ((inside ? 0.1 : 0.35) - ambK) * Math.min(1, dt * 3); amb.intensity = ambK;
 
+  const px0 = camera.position.x, pz0 = camera.position.z;
   if (locked && !hab?.busy && !rover?.busy && rover?.mode !== 'driving') {
-    const speed = keys.has('ShiftLeft') ? 6 : 3;
+    const base = hab?.exposed ? 1.7 : 1.4, speed = keys.has('ShiftLeft') ? base * 1.9 : base;   // a person in a suit does not sprint
     fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw)); rgt.set(Math.cos(yaw), 0, -Math.sin(yaw)); mv.set(0, 0, 0);
     if (keys.has('KeyW')) mv.add(fwd); if (keys.has('KeyS')) mv.sub(fwd);
     if (keys.has('KeyD')) mv.add(rgt); if (keys.has('KeyA')) mv.sub(rgt);
@@ -225,11 +257,11 @@ function frame() {
     const nx = Math.max(-280, Math.min(280, camera.position.x + mv.x)), nz = Math.max(-280, Math.min(280, camera.position.z + mv.z));
     if (rover?.mode === 'cabin') rover.walk(mv.x, mv.z);
     else {
-    const blk = (x: number, z: number) => (hab ? hab.blocked(x, z) : false) || propBlocked(x, z) || (rover ? rover.blocks(x, z) : false);
-    if (!blk(nx, camera.position.z)) camera.position.x = nx;
-    if (!blk(camera.position.x, nz)) camera.position.z = nz;
+      const blk = (x: number, z: number) => (hab ? hab.blocked(x, z) : false) || propBlocked(x, z) || (rover ? rover.blocks(x, z) : false);
+      if (!blk(nx, camera.position.z)) camera.position.x = nx;
+      if (!blk(camera.position.x, nz)) camera.position.z = nz;
     }
-    if (!inRover && keys.has('Space') && onGround && !(hab && hab.inHab(camera.position.x, camera.position.z))) { vy = 2.6; onGround = false; }
+    if (!inRover && keys.has('Space') && onGround && !(hab && hab.inHab(camera.position.x, camera.position.z))) { vy = 2.2; onGround = false; }
   }
   if (inRover && rover) {
     rover.cameraPos(camera.position); vy = 0; onGround = true;
@@ -239,7 +271,11 @@ function frame() {
     const floor = heightAt(camera.position.x, camera.position.z) + EYE;
     if (camera.position.y <= floor) { camera.position.y = floor; vy = 0; onGround = true; }
   }
-  camera.rotation.set(pitch, yaw, 0, 'YXZ');
+  const vel = inRover ? 0 : Math.hypot(camera.position.x - px0, camera.position.z - pz0) / Math.max(dt, 1e-4);
+  bobT += vel * dt * 2.1; const bk = onGround ? Math.min(1, vel / 1.2) : 0;
+  camera.rotation.set(pitch + Math.sin(bobT * 2) * 0.0045 * bk, yaw, Math.sin(bobT) * 0.0035 * bk, 'YXZ');
+  lamp.visible = !!hab && hab.exposed && hab.suitOn;
+  player.update(dt, camera.position, yaw, vel, onGround, !!hab?.suitOn, comms.padOpen, !!hab?.exposed);
 
   sun.position.copy(camera.position).addScaledVector(sd, 600);
   sun.target.position.copy(camera.position);
