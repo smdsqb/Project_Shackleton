@@ -1,3 +1,4 @@
+import { Crew } from './crew';
 import * as THREE from 'three';
 import { heightAt, isSunlit, rand, loadTerrain, getSite } from './terrain';
 import { buildExterior, propBlocked } from './exterior';
@@ -92,6 +93,7 @@ function buildWorld() {
 
   const gy = heightAt(0, 0);
   hab = new Hab(scene, gy);
+  crew = new Crew(scene, heightAt, hab);
   hab.onComms = openComms;
   dishPos.set(0, gy + WALL_H + CAP_H + 0.9, 0);
   arrayPos.set(14, heightAt(14, 6) + 12, 6);
@@ -102,6 +104,7 @@ function buildWorld() {
 // ---------- sim ----------
 const sim = new Sim();
 let hab: Hab | null = null;
+let crew: Crew | null = null;
 let simMs = Date.now();
 const startMs = simMs;
 let flare = 'NONE', sunLive = false;
@@ -184,6 +187,7 @@ function frame() {
   sim.step(dt * SIM.timeRate);
   if (hab) {
     hab.update(dt, dt * SIM.timeRate, camera.position, sim);
+    crew?.update(dt, camera.position);
     promptEl.textContent = hab.prompt; promptEl.style.display = hab.prompt && locked ? 'block' : 'none';
     toastEl.textContent = hab.toast; toastEl.style.display = hab.toast ? 'block' : 'none';
     taskEl.style.display = hab.busy ? 'block' : 'none';

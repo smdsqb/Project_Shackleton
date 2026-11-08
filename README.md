@@ -29,3 +29,15 @@ Hosted on Vercel from the main branch. Set `GROQ_API_KEY` for the comms operator
 ## The Hab
 
 A rigid, painted-aluminium surface habitat: radiused drum and dome (~155 m2 floor) with panel seams, a gold thermal-blanket skirt, portholes, curved-roof airlocks with interlocked hatches, racks for the oxygenator, atmospheric regulator and water reclaimer, and quarters for a crew of five. Interior is soft-edged and NASA-branded (blue band, plates, meatball). Outside: sintered pad, dish, solar array, tanks, batteries, radiator, flag. The meatball and worm are stylised canvas recreations; swap in official art from the NASA Brand Center before release. Airlock timings and costs are design placeholders.
+
+## Crew (branch `crew-bots`)
+
+Four NPC astronauts (OKAFOR, WHITAKER, ZHAO, MENDOZA) share the hab with the player-commander. `src/crew.ts` builds each one
+procedurally (varied height, build, skin tone, hair, eye colour; NASA polo, meatball/flag/name-tape patches indoors, white EVA suit
+with PLSS, gold visor and stripes outside) and runs a duty scheduler:
+
+- one asleep in a bunk (curtain draws back), one at a porthole, one on comms/racks/lab, one on EVA, always
+- shift change every ~2.5-3.5 min (`CREW_CFG`): sleeper -> window -> comms -> EVA -> sleeper; the new sleeper is in bed before the old one wakes
+- task pools per role: stargaze / photo / journal / coffee / stretch; software update / radio check / rack check / lab; moonwalk / sample collection / panel dusting / equipment inspection
+- airlock transits (outbound lock 1, inbound lock 2) with suit-up swap; natural gait, lunar lope on EVA, blinking, saccades, breathing, glances at the player
+- bots do not interact with each other or the player yet; each task owns its own spot

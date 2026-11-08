@@ -52,6 +52,7 @@ function aoBlob(w: number, d: number) {
 
 export class Hab {
   prompt = ''; toast = ''; suitHours = EVA_H; exposed = false; where = 'HAB';
+  curtains: THREE.Group[] = [];
   suitState: 'rack' | 'donning' | 'on' | 'doffing' = 'rack';
   taskLabel = ''; taskProgress = 0; onComms: (() => void) | null = null;
   get suitOn() { return this.suitState === 'on'; }
@@ -158,7 +159,7 @@ export class Hab {
     fit(-0.3 * P, { w: 2.0, h: 0.95, color: 0xdfe3e8, text: 'GALLEY' }); fit(0.9 * P, { w: 1.4, h: 1.4, color: 0xf6f7f9, text: 'MEDICAL', accent: NASA.red });
     for (const th of [0.28 * P, 0.5 * P, 0.72 * P]) {
       fit(th, { w: 2.0, h: 0.5, y: 0.25, d: 0.95, color: 0xc4ceda, accent: null }); fit(th, { w: 2.0, h: 0.5, y: 1.3, d: 0.95, color: 0xc4ceda, accent: null });
-      fit(th, { w: 2.0, h: 1.9, d: 0.04, r: 4.35, color: 0x2c5aa0, accent: null, text: th === 0.5 * P ? 'CREW QUARTERS' : undefined });
+      this.curtains.push(fit(th, { w: 2.0, h: 1.9, d: 0.04, r: 4.35, color: 0x2c5aa0, accent: null, text: th === 0.5 * P ? 'CREW QUARTERS' : undefined }));
     }
     // suit rack (five suits) beside Airlock 1
     const rackTh = -0.13 * P, rg = fit(rackTh, { w: 2.3, h: 2.0, d: 0.15, r: 5.2, color: 0x59626d, text: 'EVA SUITS', accent: NASA.red });
@@ -273,6 +274,8 @@ export class Hab {
     return this.circles.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + PR);
   }
   inHab(x: number, z: number) { return Math.hypot(x, z) < HAB_R - 0.2; }
+  /** visual-only door control for the crew (does not touch airlock pressure or sim state) */
+  setDoor(lock: number, which: 'inner' | 'outer', open: boolean) { const l = this.locks[lock]; if (l) l[which].open = open; }
 
   press() { if (this.best) { this.toast = this.best.run(); this.toastT = 2.8; } }
 
