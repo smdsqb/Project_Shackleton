@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { heightAt, isSunlit, rand, loadTerrain, getSite } from './terrain';
-import { buildExterior, propBlocked } from './exterior';
+import { buildExterior, propBlocked, propHit } from './exterior';
+import { Rover } from './rover';
 import { bodyDir, loadEphemeris } from './ephemeris';
 import { Sim, SIM } from './sim';
 import { Hab, WALL_H, CAP_H } from './hab';
@@ -92,16 +93,19 @@ function buildWorld() {
 
   const gy = heightAt(0, 0);
   hab = new Hab(scene, gy);
-  hab.onComms = openComms;
+  hab.onComms = () => openComms('hab');
   dishPos.set(0, gy + WALL_H + CAP_H + 0.9, 0);
   arrayPos.set(14, heightAt(14, 6) + 12, 6);
   buildExterior(scene, heightAt, arrayPos);
+  rover = new Rover(scene, (x, z, r) => (hab ? hab.solid(x, z, r) : false) || propHit(x, z, r), () => dishPos);
+  rover.onRadio = () => openComms('rover');
   camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE;
 }
 
 // ---------- sim ----------
 const sim = new Sim();
 let hab: Hab | null = null;
+let rover: Rover | null = null;
 let simMs = Date.now();
 const startMs = simMs;
 let flare = 'NONE', sunLive = false;
@@ -131,6 +135,7 @@ function telemetry() {
 const comms = new Comms({
   telemetry, link, now: () => new Date(simMs), delayS: () => SIM.commsDelayS,
   onClose: () => { renderer.domElement.requestPointerLock(); },
+  rover: { telemetry: () => rover?.telemetry(), link: () => rover?.habLink() ?? { up: false, dist: 0, reason: 'THERE IS NO ROVER.' }, occupied: () => !!rover && rover.inside },
 });
 
 // ---------- controls ----------
@@ -143,9 +148,15 @@ document.addEventListener('pointerlockchange', () => {
   if (!locked && !comms.isOpen) { enter.textContent = 'RESUME'; intro.classList.remove('leaving'); keys.clear(); }
 });
 renderer.domElement.addEventListener('click', () => { if (!locked && !comms.isOpen && intro.classList.contains('leaving')) renderer.domElement.requestPointerLock(); });
-function openComms() { keys.clear(); document.exitPointerLock(); comms.open(); }
+function openComms(mode: 'hab' | 'rover' = 'hab') { keys.clear(); document.exitPointerLock(); comms.open(mode); }
 addEventListener('mousemove', (e) => { if (!locked) return; yaw -= e.movementX * 0.0022; pitch = Math.max(-1.5, Math.min(1.5, pitch - e.movementY * 0.0022)); });
-addEventListener('keydown', (e) => { keys.add(e.code); if (e.code === 'KeyE' && locked) hab?.press(); });
+addEventListener('keydown', (e) => {
+  keys.add(e.code); if (!locked) return;
+  if (e.code === 'KeyE') { if (rover?.hasPrompt) rover.press(); else hab?.press(); }
+  if (e.code === 'KeyL' && rover?.inside) rover.toggleLights();
+  if (e.code === 'KeyR' && rover?.mode === 'driving') rover.onRadio?.();
+});
+const wrapPi = (a: number) => ((((a + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) - Math.PI;
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
@@ -171,7 +182,8 @@ function drawHud(az: number, el: number) {
     row('COMMS DELAY', `${SIM.commsDelayS.toFixed(2)} s one-way`) +
     row('EARTH LINK', SIM.commsAlwaysOn ? 'ONLINE · 24x7 TEST MODE' : link().up ? 'ACQUIRED' : 'LOS', link().up ? 'ok' : 'bad') +
     row('EARTH IN VIEW', earthVisible ? `YES · EL ${(earthEl * 57.2958).toFixed(1)}°` : 'NO · LINE OF SIGHT BLOCKED', earthVisible ? 'ok' : 'warn') +
-    (hab ? hab.status().map(([k, v, c]) => row(k, v, c)).join('') : '');
+    (hab ? hab.status().map(([k, v, c]) => row(k, v, c)).join('') : '') +
+    (rover ? rover.status().map(([k, v, c]) => row(k, v, c)).join('') : '');
 }
 
 // ---------- loop ----------
@@ -183,33 +195,50 @@ function frame() {
   simMs += dt * SIM.timeRate * 1000;
   sim.step(dt * SIM.timeRate);
   if (hab) {
+    hab.shelter = !!rover && rover.inside;
     hab.update(dt, dt * SIM.timeRate, camera.position, sim);
-    promptEl.textContent = hab.prompt; promptEl.style.display = hab.prompt && locked ? 'block' : 'none';
-    toastEl.textContent = hab.toast; toastEl.style.display = hab.toast ? 'block' : 'none';
-    taskEl.style.display = hab.busy ? 'block' : 'none';
-    if (hab.busy) { taskLbl.textContent = hab.taskLabel; taskBar.style.width = (hab.taskProgress * 100).toFixed(1) + '%'; }
     visorEl.classList.toggle('on', hab.suitOn);
+  }
+  if (rover && hab) {
+    const r = rover.update(dt, dt * SIM.timeRate, { player: camera.position, suitOn: hab.suitOn, keys, sim, hab: dishPos });
+    yaw += r.dHeading;
+    if (rover.pendingExit) { camera.position.x = rover.pendingExit.x; camera.position.z = rover.pendingExit.y; camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE; vy = 0; yaw = rover.heading + Math.PI; rover.pendingExit = null; }
+  }
+  {
+    const pr = rover?.prompt || hab?.prompt || '', tt = rover?.toast || hab?.toast || '', busy = !!(rover?.busy || hab?.busy);
+    promptEl.textContent = pr; promptEl.style.display = pr && locked ? 'block' : 'none';
+    toastEl.textContent = tt; toastEl.style.display = tt ? 'block' : 'none';
+    taskEl.style.display = busy ? 'block' : 'none';
+    if (busy) { const o = rover?.busy ? rover : hab!; taskLbl.textContent = o.taskLabel; taskBar.style.width = (o.taskProgress * 100).toFixed(1) + '%'; }
   }
   const date = new Date(simMs), s = bodyDir('sun', date), e = bodyDir('earth', date);
   sunLive = s.live; sd.set(s.x, s.y, s.z); earthDir.set(e.x, e.y, e.z); earthEl = e.el;
-  const inside = hab ? hab.inHab(camera.position.x, camera.position.z) : false;
+  const inRover = !!rover && rover.inside, inside = (hab ? hab.inHab(camera.position.x, camera.position.z) : false) || inRover;
   ambK += ((inside ? 0.1 : 0.35) - ambK) * Math.min(1, dt * 3); amb.intensity = ambK;
 
-  if (locked && !hab?.busy) {
+  if (locked && !hab?.busy && !rover?.busy && rover?.mode !== 'driving') {
     const speed = keys.has('ShiftLeft') ? 6 : 3;
     fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw)); rgt.set(Math.cos(yaw), 0, -Math.sin(yaw)); mv.set(0, 0, 0);
     if (keys.has('KeyW')) mv.add(fwd); if (keys.has('KeyS')) mv.sub(fwd);
     if (keys.has('KeyD')) mv.add(rgt); if (keys.has('KeyA')) mv.sub(rgt);
     if (mv.lengthSq() > 0) mv.normalize().multiplyScalar(speed * dt);
     const nx = Math.max(-280, Math.min(280, camera.position.x + mv.x)), nz = Math.max(-280, Math.min(280, camera.position.z + mv.z));
-    const blk = (x: number, z: number) => (hab ? hab.blocked(x, z) : false) || propBlocked(x, z);
+    if (rover?.mode === 'cabin') rover.walk(mv.x, mv.z);
+    else {
+    const blk = (x: number, z: number) => (hab ? hab.blocked(x, z) : false) || propBlocked(x, z) || (rover ? rover.blocks(x, z) : false);
     if (!blk(nx, camera.position.z)) camera.position.x = nx;
     if (!blk(camera.position.x, nz)) camera.position.z = nz;
-    if (keys.has('Space') && onGround && !(hab && hab.inHab(camera.position.x, camera.position.z))) { vy = 2.6; onGround = false; }
+    }
+    if (!inRover && keys.has('Space') && onGround && !(hab && hab.inHab(camera.position.x, camera.position.z))) { vy = 2.6; onGround = false; }
   }
-  vy -= G * dt; camera.position.y += vy * dt;
-  const floor = heightAt(camera.position.x, camera.position.z) + EYE;
-  if (camera.position.y <= floor) { camera.position.y = floor; vy = 0; onGround = true; }
+  if (inRover && rover) {
+    rover.cameraPos(camera.position); vy = 0; onGround = true;
+    if (rover.mode === 'driving') { const base = rover.heading - Math.PI / 2; yaw = base + Math.max(-2.2, Math.min(2.2, wrapPi(yaw - base))); pitch = Math.max(-1.0, Math.min(0.9, pitch)); }
+  } else {
+    vy -= G * dt; camera.position.y += vy * dt;
+    const floor = heightAt(camera.position.x, camera.position.z) + EYE;
+    if (camera.position.y <= floor) { camera.position.y = floor; vy = 0; onGround = true; }
+  }
   camera.rotation.set(pitch, yaw, 0, 'YXZ');
 
   sun.position.copy(camera.position).addScaledVector(sd, 600);

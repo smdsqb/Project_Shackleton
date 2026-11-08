@@ -54,6 +54,7 @@ export class Hab {
   prompt = ''; toast = ''; suitHours = EVA_H; exposed = false; where = 'HAB';
   suitState: 'rack' | 'donning' | 'on' | 'doffing' = 'rack';
   taskLabel = ''; taskProgress = 0; onComms: (() => void) | null = null;
+  shelter = false; // set while the player is in a pressurised vehicle
   get suitOn() { return this.suitState === 'on'; }
   get busy() { return this.suitState === 'donning' || this.suitState === 'doffing'; }
   private suitT = 0; private suitStage = -1; private suitMeshes: THREE.Group[] = []; private suitTaken: THREE.Group | null = null;
@@ -273,6 +274,12 @@ export class Hab {
     return this.circles.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + PR);
   }
   inHab(x: number, z: number) { return Math.hypot(x, z) < HAB_R - 0.2; }
+  /** Vehicle-sized obstacle test: the drum and both airlock tunnels. */
+  solid(x: number, z: number, r: number): boolean {
+    if (Math.hypot(x, z) < HAB_R + 0.4 + r) return true;
+    for (const l of this.locks) { const [u, v] = this.local(l, x, z); if (u > HAB_R - 0.5 && u < HAB_R + TL + 0.6 + r && Math.abs(v) < 1.0 + r) return true; }
+    return false;
+  }
 
   press() { if (this.best) { this.toast = this.best.run(); this.toastT = 2.8; } }
 
@@ -301,6 +308,7 @@ export class Hab {
       const [u, v] = this.local(l, p.x, p.z);
       if (u >= HAB_R - 0.05 && u < HAB_R + TL + 0.15 && Math.abs(v) < 0.9) { this.where = l.name; this.exposed = l.p < 50; }
     }
+    if (this.shelter) { this.where = 'ROVER CABIN'; this.exposed = false; }
     if (this.suitOn && this.exposed) this.suitHours = Math.max(0, this.suitHours - dtSim / 3600);
     this.toastT -= dt; if (this.toastT <= 0) this.toast = '';
     let best: Item | null = null, bd = 1e9;
