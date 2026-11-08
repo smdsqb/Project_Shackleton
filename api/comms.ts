@@ -225,25 +225,25 @@ async function groq(messages: { role: string; content: string }[]): Promise<{
   if (!key) {
     return {
       text: null,
-      diagnostic: 'GROQ_API_KEY is missing from the Vercel environment.'
+      diagnostic: 'GROQ_API_KEY is missing from Vercel environment.'
     };
   }
 
   const models = [
     process.env.GROQ_MODEL,
-    'llama-3.3-70b-versatile',
-    'llama-3.1-8b-instant'
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b'
   ].filter(Boolean) as string[];
 
   let lastError = 'All models failed';
 
-  for (const model of models) {
+  for (const model of [...new Set(models)]) {
     try {
       const r = await fetch(
         'https://api.groq.com/openai/v1/chat/completions',
         {
           method: 'POST',
-          signal: AbortSignal.timeout(15000),
+          signal: AbortSignal.timeout(20000),
           headers: {
             Authorization: `Bearer ${key}`,
             'Content-Type': 'application/json'
@@ -285,7 +285,7 @@ async function groq(messages: { role: string; content: string }[]): Promise<{
         };
       }
 
-      lastError = `Empty response from model: ${model}`;
+      lastError = `Empty response from ${model}`;
 
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
@@ -297,6 +297,7 @@ async function groq(messages: { role: string; content: string }[]): Promise<{
     diagnostic: lastError
   };
 }
+
 
 // MAIN VERCEL POST HANDLER
 export async function POST(request: Request) {
