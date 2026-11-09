@@ -11,7 +11,7 @@ import { Comms, type Link } from './comms';
 import { Director } from './events';
 import { UI, ensureAudio } from './ui';
 import { inject } from '@vercel/analytics';
-import { inject as injectSpeedInsights } from '@vercel/speed-insights';
+import { injectSpeedInsights } from '@vercel/speed-insights';
 
 inject();
 injectSpeedInsights();
