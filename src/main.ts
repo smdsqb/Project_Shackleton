@@ -10,6 +10,11 @@ import { Player } from './player';
 import { Comms, type Link } from './comms';
 import { Director } from './events';
 import { UI, ensureAudio } from './ui';
+import { inject } from '@vercel/analytics';
+import { injectSpeedInsights } from '@vercel/speed-insights';
+
+inject();
+injectSpeedInsights();
 
 const MISSION_DAY0 = 214, EYE = 1.7, G = 1.62;
 
