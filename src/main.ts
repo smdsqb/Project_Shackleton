@@ -1,3 +1,4 @@
+import { inject } from '@vercel/analytics';
 import { Crew } from './crew';
 import * as THREE from 'three';
 import { heightAt, isSunlit, rand, loadTerrain, getSite } from './terrain';
@@ -10,6 +11,9 @@ import { Player } from './player';
 import { Comms, type Link } from './comms';
 import { Director } from './events';
 import { UI, ensureAudio } from './ui';
+
+// Initialize Vercel Web Analytics
+inject();
 
 const MISSION_DAY0 = 214, EYE = 1.7, G = 1.62;
 
