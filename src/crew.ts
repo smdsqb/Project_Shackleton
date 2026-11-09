@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { meatball, flagTexture, plateTexture } from './livery';
 import { HAB_R } from './hab';
+import { propCircles } from './exterior';
 
 type Pose = Record<string, number>;
 type Slot = 'sleep' | 'window' | 'comms' | 'eva';
@@ -263,9 +264,11 @@ interface Node { x: number; z: number; ev?: string; wait?: number; lane?: boolea
 const BAYS = [0.28 * PI, 0.5 * PI, 0.72 * PI];
 const bedStop = (bay: number): Stop => ({ ...pol(6.52, BAYS[bay]), yaw: -BAYS[bay], anim: 'sleep', dwell: 1e9, bay });
 const win = (anim: string, d: [number, number]): Stop => { const a = pick([1.22, 1.92]); return { ...pol(6.38, a), yaw: faceOut(a), anim, dwell: rnd(d[0], d[1]) }; };
-const PROPS = [{ x: -10, z: 9.5, r: 3.2 }, { x: 10.2, z: -9, r: 3.2 }, { x: -7, z: -11, r: 3.2 }, { x: 14, z: 6, r: 1.8 }, { x: 8.5, z: 7.5, r: 0.8 }];
+const PROPS = propCircles; // live list shared with the exterior
+let extraObstacles: () => { x: number; z: number; r: number }[] = () => [];
+export const setCrewObstacles = (f: () => { x: number; z: number; r: number }[]) => { extraObstacles = f; };
 const ROOM = [{ x: -2.6, z: -2.08, r: 0.75 }, { x: 0, z: -2.08, r: 0.75 }, { x: 2.6, z: -2.08, r: 0.75 }, { x: 0, z: 2.47, r: 1.25 }];
-const farPoint = () => { for (let i = 0; i < 40; i++) { const a = rnd(0, TAU), r = rnd(17, 44), p = pol(r, a); if (PROPS.every((c) => hypot(p.x - c.x, p.z - c.z) > c.r + 2)) return p; } return pol(30, 1); };
+const farPoint = () => { for (let i = 0; i < 40; i++) { const a = rnd(0, TAU), r = rnd(17, 44), p = pol(r, a); if (PROPS.concat(extraObstacles()).every((c) => hypot(p.x - c.x, p.z - c.z) > c.r + 2)) return p; } return pol(30, 1); };
 const evaStops = (anim: string, n: number, d: [number, number]): Stop[] => Array.from({ length: n }, () => ({ ...farPoint(), yaw: rnd(0, TAU), anim, dwell: rnd(d[0], d[1]), eva: true }));
 const TASKS: TaskDef[] = [
   { id: 'sleep', slot: 'sleep', w: 1, dur: [1e9, 1e9], stops: (b) => [bedStop(b.bay)] },
@@ -276,7 +279,7 @@ const TASKS: TaskDef[] = [
   { id: 'stretch', slot: 'window', w: 1, dur: [24, 34], stops: () => [{ x: rnd(-1.2, 1.2), z: rnd(-0.5, 0.5), yaw: rnd(0, TAU), anim: 'stretch', dwell: rnd(24, 34) }] },
   { id: 'update', slot: 'comms', w: 5, dur: [70, 120], stops: () => [{ ...pol(5.78, -0.9 * PI), yaw: faceOut(-0.9 * PI), anim: 'type', dwell: rnd(70, 120) }] },
   { id: 'radio', slot: 'comms', w: 1.6, dur: [35, 55], stops: () => [{ ...pol(5.78, -0.9 * PI), yaw: faceOut(-0.9 * PI), anim: 'radio', dwell: rnd(35, 55) }] },
-  { id: 'rack', slot: 'comms', w: 2, dur: [45, 75], stops: () => { const a = pick([-0.48, -0.62, -0.76]) * PI; return [{ ...pol(5.55, a), yaw: faceOut(a), anim: 'tablet', dwell: rnd(45, 75) }]; } },
+  { id: 'rack', slot: 'comms', w: 2, dur: [45, 75], stops: () => { const a = pick([-0.44, -0.54, -0.65, -0.77]) * PI; return [{ ...pol(5.55, a), yaw: faceOut(a), anim: 'tablet', dwell: rnd(45, 75) }]; } },
   { id: 'lab', slot: 'comms', w: 1.5, dur: [45, 75], stops: () => [{ x: pick([-2.6, 0, 2.6]), z: -1.12, yaw: PI, anim: 'lab', dwell: rnd(45, 75) }] },
   { id: 'moonwalk', slot: 'eva', w: 3, dur: [90, 140], stops: () => evaStops('look', 3, [6, 11]) },
   { id: 'sample', slot: 'eva', w: 3, dur: [90, 140], stops: () => evaStops('sample', 3, [16, 22]) },
@@ -352,7 +355,7 @@ class Bot {
     }
     if (n.wait) this.waitLeft = n.wait * (this.hurry ? 0.3 : 1);
   }
-  private circles() { return this.eva ? PROPS.concat([{ x: 0, z: 0, r: HAB_R + 1.3 }]) : ROOM; }
+  private circles() { return this.eva ? PROPS.concat(extraObstacles(), [{ x: 0, z: 0, r: HAB_R + 1.3 }]) : ROOM; }
 
   update(dt: number, cam: THREE.Vector3) {
     this.t += dt; const T = this.t * this.spec.tempo + this.ph0, r = this.rig;
@@ -375,6 +378,11 @@ class Bot {
         const da = wrap(atan2(dx, dz) - this.yaw); this.yaw += clamp(da, -3.2 * dt, 3.2 * dt);
         this.v += (tv * max(0, cos(da)) - this.v) * min(1, dt * 3);
         this.x += sin(this.yaw) * this.v * dt; this.z += cos(this.yaw) * this.v * dt; moving = this.v > 0.12;
+        for (const c of this.circles()) { // hard stop: steering is soft, so never let anyone stand inside an obstacle (only the airlock lane may cross the hab ring)
+          if (n.lane && c.x === 0 && c.z === 0 && c.r > HAB_R) continue;
+          const ox = this.x - c.x, oz = this.z - c.z, od = hypot(ox, oz), R = c.r + 0.35;
+          if (od < R && od > 0.001) { this.x = c.x + (ox / od) * R; this.z = c.z + (oz / od) * R; }
+        }
         if (!this.eva && !n.lane) { const rr = hypot(this.x, this.z), lim = HAB_R - 0.55; if (rr > lim) { this.x *= lim / rr; this.z *= lim / rr; } }
       }
     } else { this.v *= 0.8; }

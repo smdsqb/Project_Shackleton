@@ -47,7 +47,7 @@ export function crinkleTexture(rx: number, ry: number) {
 
 /** The NASA "meatball": blue disc, stars, white orbit, red vector, white lettering. */
 export function meatball() {
-  const c = cv(512, 512), g = c.getContext('2d')!, r = seeded(42);
+  const c = cv(1024, 1024), g = c.getContext('2d')!, r = seeded(42); g.scale(2, 2);
   g.beginPath(); g.arc(256, 256, 250, 0, Math.PI * 2); g.fillStyle = NASA.blueCss; g.fill(); g.save(); g.clip();
   for (let i = 0; i < 90; i++) { g.fillStyle = `rgba(255,255,255,${0.5 + r() * 0.5})`; g.beginPath(); g.arc(r() * 512, r() * 512, 1 + r() * 2.2, 0, 7); g.fill(); }
   g.fillStyle = NASA.redCss; g.beginPath(); g.moveTo(40, 360); g.bezierCurveTo(150, 335, 330, 235, 480, 120); g.bezierCurveTo(370, 240, 280, 320, 175, 400); g.closePath(); g.fill();
@@ -59,7 +59,7 @@ export function meatball() {
 
 /** The "worm" wordmark: red, no crossbar on the As. */
 export function worm() {
-  const c = cv(1024, 340), g = c.getContext('2d')!;
+  const c = cv(2048, 680), g = c.getContext('2d')!; g.scale(2, 2);
   g.fillStyle = NASA.redCss; g.font = '900 250px Arial Black, Helvetica, Arial, sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'left';
   let x = 20; for (const ch of 'N\u039BS\u039B') { g.fillText(ch, x, 175); x += g.measureText(ch).width + 14; }
   return finish(c);
@@ -67,7 +67,7 @@ export function worm() {
 
 /** Equipment plate: light panel, NASA-blue lettering, blue/red edge tabs. */
 export function plateTexture(text: string) {
-  const c = cv(512, 96), g = c.getContext('2d')!;
+  const c = cv(1024, 192), g = c.getContext('2d')!; g.scale(2, 2);
   g.fillStyle = '#f3f5f7'; g.fillRect(0, 0, 512, 96);
   g.fillStyle = NASA.blueCss; g.fillRect(0, 0, 18, 96); g.fillStyle = NASA.redCss; g.fillRect(18, 0, 6, 96);
   g.strokeStyle = NASA.blueCss; g.lineWidth = 3; g.strokeRect(1.5, 1.5, 509, 93);
@@ -76,7 +76,7 @@ export function plateTexture(text: string) {
 }
 
 export function flagTexture() {
-  const c = cv(494, 260), g = c.getContext('2d')!;
+  const c = cv(988, 520), g = c.getContext('2d')!; g.scale(2, 2);
   for (let i = 0; i < 13; i++) { g.fillStyle = i % 2 ? '#fff' : '#b22234'; g.fillRect(0, (i * 260) / 13, 494, 260 / 13 + 1); }
   g.fillStyle = '#3c3b6e'; g.fillRect(0, 0, 198, 140);
   g.fillStyle = '#fff';
