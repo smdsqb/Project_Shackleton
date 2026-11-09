@@ -1,4 +1,5 @@
 import { inject } from '@vercel/analytics';
+import { injectSpeedInsights } from '@vercel/speed-insights';
 import { Crew } from './crew';
 import * as THREE from 'three';
 import { heightAt, isSunlit, rand, loadTerrain, getSite } from './terrain';
@@ -14,6 +15,9 @@ import { UI, ensureAudio } from './ui';
 
 // Initialize Vercel Web Analytics
 inject();
+
+// Initialize Vercel Speed Insights
+injectSpeedInsights();
 
 const MISSION_DAY0 = 214, EYE = 1.7, G = 1.62;
 
