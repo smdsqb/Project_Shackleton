@@ -62,3 +62,19 @@ A rigid, painted-aluminium surface habitat: radiused drum and dome (~155 m2 floo
 
 Press C to call Houston. Static comes up, a female link-manager voice brings the link up, then you chat through the wrist pad and Houston answers in a male voice. The Hab comms desk gives the same conversation as text only.
 Houston's brain and both voices use the GROQ_API_KEY environment variable on Vercel. Optional overrides: GROQ_TTS_FEMALE, GROQ_TTS_MALE, GROQ_TTS_MODEL. If the voice service is unavailable the browser's built-in voices are used.
+
+### Voices
+
+The radio voices come from /api/tts, which tries the providers you have keys for, best first: ElevenLabs (ELEVENLABS_API_KEY), Runway (RUNWAYML_API_SECRET), OpenAI (OPENAI_API_KEY), then Groq (GROQ_API_KEY). Force an order with TTS_ORDER, for example "elevenlabs,openai,groq". Voice choices have environment overrides (ELEVENLABS_VOICE_MALE, ELEVENLABS_VOICE_FEMALE, RUNWAY_VOICE_MALE, RUNWAY_VOICE_FEMALE, OPENAI_VOICE_MALE, OPENAI_VOICE_FEMALE). If every provider fails the browser's built-in voices are used.
+
+## Crew (branch `crew-bots`)
+
+Four NPC astronauts (OKAFOR, WHITAKER, ZHAO, MENDOZA) share the hab with the player-commander. `src/crew.ts` builds each one
+procedurally (varied height, build, skin tone, hair, eye colour; NASA polo, meatball/flag/name-tape patches indoors, white EVA suit
+with PLSS, gold visor and stripes outside) and runs a duty scheduler:
+
+- one asleep in a bunk (curtain draws back), one at a porthole, one on comms/racks/lab, one on EVA, always
+- shift change every ~2.5-3.5 min (`CREW_CFG`): sleeper -> window -> comms -> EVA -> sleeper; the new sleeper is in bed before the old one wakes
+- task pools per role: stargaze / photo / journal / coffee / stretch; software update / radio check / rack check / lab; moonwalk / sample collection / panel dusting / equipment inspection
+- airlock transits (outbound lock 1, inbound lock 2) with suit-up swap; natural gait, lunar lope on EVA, blinking, saccades, breathing, glances at the player
+- bots do not interact with each other or the player yet; each task owns its own spot

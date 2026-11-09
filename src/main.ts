@@ -1,3 +1,5 @@
+import { inject } from '@vercel/analytics';
+import { Crew, setCrewObstacles } from './crew';
 import * as THREE from 'three';
 import { heightAt, isSunlit, rand, loadTerrain, getSite } from './terrain';
 import { buildExterior, propBlocked, propHit } from './exterior';
@@ -10,6 +12,9 @@ import { Player } from './player';
 import { Comms, type Link } from './comms';
 import { Director } from './events';
 import { UI, ensureAudio } from './ui';
+
+// Initialize Vercel Web Analytics
+inject();
 
 const MISSION_DAY0 = 214, EYE = 1.7, G = 1.62;
 
@@ -91,10 +96,12 @@ function buildWorld() {
 
   const gy = heightAt(0, 0);
   hab = new Hab(scene, gy);
+  crew = new Crew(scene, heightAt, hab);
   hab.onComms = () => openComms('hab');
   dishPos.set(0, gy + WALL_H + CAP_H + 0.9, 0);
   arrayPos.set(14, heightAt(14, 6) + 12, 6);
   buildExterior(scene, heightAt, arrayPos);
+  setCrewObstacles(() => (rover ? [{ x: rover.x, z: rover.z, r: 5.6 }] : []));
   rover = new Rover(scene, (x, z, r) => (hab ? hab.solid(x, z, r) : false) || propHit(x, z, r), () => dishPos);
   rover.onRadio = () => openComms('rover');
   camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE;
@@ -106,6 +113,7 @@ function buildWorld() {
 const sim = new Sim();
 const dir = new Director(sim);
 let hab: Hab | null = null;
+let crew: Crew | null = null;
 let rover: Rover | null = null;
 let started = false;
 const player = new Player(scene, camera);
@@ -225,6 +233,8 @@ function frame() {
   if (hab) {
     hab.shelter = !!rover && rover.inside;
     hab.update(dt, Math.min(dtSim, dt * 60), camera.position, sim, lookDir);
+    hab.update(dt, Math.min(dtSim, dt * 60), camera.position, sim);
+    if (running) crew?.update(dt, camera.position);
     visorEl.classList.toggle('on', hab.suitOn);
   }
   if (rover && hab) {

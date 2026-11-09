@@ -6,6 +6,8 @@ import { WALL_H, CAP_H } from './hab';
 // Outpost exterior: sintered-regolith landing pad, high-gain dish, the solar array (same geometry and position as
 // before, so terrain shadowing still decides whether it is lit), propellant/O2 tanks, battery bank, radiator and flag.
 const circles: { x: number; z: number; r: number }[] = [];
+/** Live list of every exterior obstacle, shared with the crew so EVA walkers steer around the real props. */
+export const propCircles = circles;
 export const propBlocked = (x: number, z: number) => circles.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + 0.3);
 /** Same props, tested with a circle of radius r (for the rover). */
 export const propHit = (x: number, z: number, r: number) => circles.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + r);
