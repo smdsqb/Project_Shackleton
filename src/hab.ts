@@ -68,6 +68,7 @@ function aoBlob(w: number, d: number) {
 
 export class Hab {
   prompt = ''; toast = ''; suitHours = EVA_H; exposed = false; where = 'HAB';
+  lockdown = false; alarm = false; private paneM!: THREE.MeshPhysicalMaterial; private shutterK = 0;
   curtains: THREE.Group[] = []; bags: THREE.Object3D[] = [];
   suitState: 'rack' | 'donning' | 'on' | 'doffing' = 'rack';
   taskLabel = ''; taskProgress = 0; onComms: (() => void) | null = null;
@@ -130,7 +131,7 @@ export class Hab {
 
     // ---- portholes, decals, livery ----
     const trim2 = mat(0xb9bfc8, false, 0.3, 0.6), sleeveM = new THREE.MeshStandardMaterial({ color: 0xb9bfc8, roughness: 0.4, metalness: 0.5, side: THREE.DoubleSide });
-    const paneM = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.03, metalness: 0, transparent: true, opacity: 0.07, depthWrite: false });
+    const paneM = this.paneM = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.03, metalness: 0, transparent: true, opacity: 0.07, depthWrite: false });
     const porthole = (psi: number, y: number) => {
       const at = (r: number) => { const g = new THREE.Group(); g.position.set(r * Math.cos(psi), y, r * Math.sin(psi)); g.rotation.y = -psi; this.root.add(g); return g; };
       for (const r of [R + 0.02, R - 0.085]) at(r).add(new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.045, 12, 40).rotateY(P / 2), trim2));
@@ -280,12 +281,13 @@ export class Hab {
       };
       this.items.push(
         hatch(l.inner, HAB_R, 'INNER', () => (l.outer.open ? 'CLOSE OUTER HATCH FIRST' : l.cyc !== null ? 'AIRLOCK IS CYCLING' : l.p < 99 ? 'PRESSURISE THE AIRLOCK FIRST' : '')),
-        hatch(l.outer, HAB_R + TL, 'OUTER', () => (l.inner.open ? 'CLOSE INNER HATCH FIRST' : l.cyc !== null ? 'AIRLOCK IS CYCLING' : !this.suitOn ? 'EVA SUIT NOT SEALED' : l.p > 1 ? 'DEPRESSURISE THE AIRLOCK FIRST' : '')),
+        hatch(l.outer, HAB_R + TL, 'OUTER', () => (this.lockdown && this.where !== 'SURFACE' ? 'LOCKDOWN: HATCHES SEALED, STAY INSIDE' : l.inner.open ? 'CLOSE INNER HATCH FIRST' : l.cyc !== null ? 'AIRLOCK IS CYCLING' : !this.suitOn ? 'EVA SUIT NOT SEALED' : l.p > 1 ? 'DEPRESSURISE THE AIRLOCK FIRST' : '')),
         { ...(([x, z]) => ({ x, z }))(w(l, HAB_R + TL / 2, 0.75)), reach: 1.3,
           text: () => (l.cyc !== null ? `${l.name} CYCLING  ${l.p.toFixed(0)} kPa` : `[E] ${l.p > 50 ? 'DEPRESSURISE' : 'REPRESSURISE'} ${l.name}`),
           run: () => {
             if (l.cyc !== null) return 'CYCLE IN PROGRESS';
             if (l.inner.open || l.outer.open) return 'CLOSE BOTH HATCHES BEFORE CYCLING';
+            if (this.lockdown && l.p > 50) return 'LOCKDOWN: AIRLOCK WILL NOT CYCLE OUT';
             if (l.p > 50 && !this.suitOn) return 'REFUSED: EVA SUIT NOT SEALED';
             l.cyc = l.p > 50 ? 0 : LOCK_P; return l.cyc === 0 ? 'PUMPING AIR BACK TO THE HAB' : 'REPRESSURISING FROM HAB SUPPLY';
           } });
@@ -376,7 +378,8 @@ export class Hab {
     const target = sim.lightK; // 1 with the lights bus powered, dim red emergency light when you switch them off or the bus browns out
     this.powerK += (target - this.powerK) * Math.min(1, dt * 2.5);
     const wander = 1 + 0.012 * Math.sin(this.clock * 3.1) + 0.008 * Math.sin(this.clock * 7.3 + 1);
-    for (const { l, base, color } of this.lights) { l.intensity = base * this.powerK * wander; l.color.setHex(this.powerK < 0.3 ? 0xff3b2a : color); }
+    const pulse = this.alarm ? 0.6 + 0.4 * Math.sin(this.clock * 6) : 1; // fire / battery alarm: red lights pulsing
+    for (const { l, base, color } of this.lights) { l.intensity = base * this.powerK * wander * pulse; l.color.setHex(this.powerK < 0.3 || this.alarm ? 0xff3b2a : color); }
     for (const { m, base } of this.glows) m.emissiveIntensity = base * Math.min(1, this.powerK * 1.1);
     this.stepSuit(dt, sim);
     for (const f of this.fans) f.rotation.x += dt * 16 * this.powerK;
@@ -386,7 +389,7 @@ export class Hab {
         d.lamp.color.setHex(d.open ? 0xffb000 : 0x4fd8ff);
       }
       if (l.cyc !== null) {
-        const s = (LOCK_P / CYCLE_S) * dt; l.p = l.cyc > l.p ? Math.min(l.cyc, l.p + s) : Math.max(l.cyc, l.p - s);
+        const s = (LOCK_P / (this.lockdown ? CYCLE_S * 0.5 : CYCLE_S)) * dt; // emergency cycle: twice as fast when the hab is locked down l.p = l.cyc > l.p ? Math.min(l.cyc, l.p + s) : Math.max(l.cyc, l.p - s);
         if (l.p === l.cyc) { if (l.cyc === 0) sim.spend(0.12, 0.6); else sim.spend(0.25, 0.4); l.cyc = null; this.toast = `${l.name} ${l.p === 0 ? 'DEPRESSURISED' : 'PRESSURISED'}`; this.toastT = 2.8; }
       }
     }
@@ -402,6 +405,13 @@ export class Hab {
     let best: Item | null = null, bd = 1e9;
     for (const i of this.items) { const d = Math.hypot(p.x - i.x, p.z - i.z); if (d < i.reach && d < bd) { best = i; bd = d; } }
     this.best = best; this.prompt = best ? best.text() : '';
+  }
+
+  /** 0 = clear portholes, 1 = dust-caked and opaque, from both sides */
+  setShutters(k: number) {
+    if (Math.abs(k - this.shutterK) < 0.002) return; this.shutterK = k; const m = this.paneM;
+    m.opacity = 0.07 + 0.93 * k; m.color.setRGB(1 - 0.5 * k, 1 - 0.56 * k, 1 - 0.65 * k); m.roughness = 0.03 + 0.9 * k; m.depthWrite = k > 0.6;
+    const side = k > 0.01 ? THREE.DoubleSide : THREE.FrontSide; if (m.side !== side) { m.side = side; m.needsUpdate = true; }
   }
 
   private stepSuit(dt: number, sim: Sim) {

@@ -76,7 +76,7 @@ export class Comms {
   constructor(private host: CommsHost) {
     const st = document.createElement('style'); st.textContent = CSS; document.head.append(st);
     this.term = document.createElement('div'); this.term.id = 'term';
-    this.term.innerHTML = `<div class="box"><div class="hd"><span id="thead">HAB COMMS DESK · HOUSTON</span><span class="chip" id="tchip">STANDBY</span></div><div class="lg" id="tlog"></div><div class="hint">TEXT ONLY · ENTER SEND · ESC CLOSE</div><form class="fm" autocomplete="off"><span>&gt;</span><input id="tin" maxlength="200" spellcheck="false" placeholder="message to Houston"/></form></div>`;
+    this.term.innerHTML = `<div class="box"><div class="hd"><span id="thead">HAB COMMS DESK · HOUSTON</span><span class="chip" id="tchip">STANDBY</span></div><div class="lg" id="tlog"></div><div class="hint">TEXT ONLY · ENTER SEND · TAB CLOSE</div><form class="fm" autocomplete="off"><span>&gt;</span><input id="tin" maxlength="200" spellcheck="false" placeholder="message to Houston"/></form></div>`;
     this.pad = document.createElement('div'); this.pad.id = 'pad';
     this.pad.innerHTML = `<div class="hd"><span>SUIT COMMS PAD</span><span class="chip" id="pchip">STANDBY</span></div><div class="lg" id="plog"></div><form class="fm" autocomplete="off"><span>&gt;</span><input id="pin" maxlength="200" spellcheck="false" placeholder="talk to Houston" disabled/></form><div class="hint">ENTER SEND · TAB CLOSE</div>`;
     document.body.append(this.term, this.pad);
@@ -86,10 +86,10 @@ export class Comms {
     this.pad.querySelector('form')!.addEventListener('submit', (e) => { e.preventDefault(); const v = this.pin.value; this.pin.value = ''; void this.padSend(v); });
     this.inp.addEventListener('keydown', (e) => {
       e.stopPropagation();
-      if (e.key === 'Escape') { e.preventDefault(); this.close(); }
+      if (e.key === 'Tab') { e.preventDefault(); this.close(); }
       else if (e.key === 'ArrowUp' && this.recall.length) { this.ri = Math.max(0, this.ri - 1); this.inp.value = this.recall[this.ri] ?? ''; e.preventDefault(); }
     });
-    this.pin.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Tab' || e.key === 'Escape') { e.preventDefault(); this.closePad(); } });
+    this.pin.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Tab') { e.preventDefault(); this.closePad(); } });
     this.pin.addEventListener('keyup', (e) => e.stopPropagation());
   }
 
