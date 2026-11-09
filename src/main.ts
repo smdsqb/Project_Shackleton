@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { heightAt, isSunlit, rand, loadTerrain, getSite } from './terrain';
 import { buildExterior, propBlocked, propHit } from './exterior';
 import { Rover } from './rover';
+import { buildRocks, ROCK_CAP } from './rocks';
 import { bodyDir, loadEphemeris } from './ephemeris';
 import { Sim, SIM } from './sim';
 import { Hab, WALL_H, CAP_H } from './hab';
@@ -88,16 +89,9 @@ function buildWorld() {
   patch(700, 600, 0, new THREE.MeshStandardMaterial({ color: 0x9a968f, map: tex, bumpMap: tex, bumpScale: 3, roughness: 1 }));
   patch(8000, 200, -0.6, new THREE.MeshStandardMaterial({ color: 0x4f4c48, roughness: 1 }), 340);
 
-  const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshStandardMaterial({ color: 0x5b5853, roughness: 1 }), 1500);
+  const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshStandardMaterial({ color: 0x5b5853, roughness: 1 }), ROCK_CAP);
   const d = new THREE.Object3D(); let n = 0;
-  for (let i = 0; i < 1500; i++) {
-    const x = (rand(i, 1, 99) - 0.5) * 600, z = (rand(i, 2, 99) - 0.5) * 600;
-    if (Math.hypot(x, z) < 22) continue;
-    const s = 0.12 + rand(i, 3, 99) ** 3 * 1.7;
-    d.position.set(x, heightAt(x, z) + s * 0.25, z);
-    d.rotation.set(rand(i, 4, 99) * 6, rand(i, 5, 99) * 6, 0); d.scale.set(s, s * 0.7, s * (0.7 + rand(i, 6, 99) * 0.6));
-    d.updateMatrix(); rocks.setMatrixAt(n++, d.matrix);
-  }
+  for (const r of buildRocks()) { d.position.set(r.x, r.y, r.z); d.rotation.set(r.rx, r.ry, 0); d.scale.set(r.s, r.sy, r.sz); d.updateMatrix(); rocks.setMatrixAt(n++, d.matrix); }
   rocks.count = n; rocks.castShadow = rocks.receiveShadow = true; scene.add(rocks);
 
   const gy = heightAt(0, 0);
@@ -181,6 +175,7 @@ addEventListener('keydown', (e) => {
   if (!locked) return;
   if (e.code === 'KeyE') { if (rover?.hasPrompt) rover.press(); else hab?.press(); }
   else if (e.code === 'KeyL' && rover?.inside) rover.toggleLights();
+  else if (e.code === 'KeyX' && rover?.mode === 'driving') rover.toggleParkBrake();
   else if (e.code === 'KeyR' && rover?.mode === 'driving') rover.onRadio?.();
   else if (e.code === 'KeyC' && !e.repeat) { if (rover?.inside) rover.onRadio?.(); else void comms.togglePad(); }
   else if (e.code === 'KeyM') { keys.clear(); document.exitPointerLock(); ui.open(); }
@@ -194,6 +189,7 @@ const taskEl = document.getElementById('task')!, taskLbl = taskEl.querySelector(
 const hud = document.getElementById('hud')!, promptEl = document.getElementById('prompt')!, toastEl = document.getElementById('toast')!;
 const cls = (v: boolean, bad = false) => (v ? (bad ? 'bad' : 'warn') : 'ok');
 const row = (k: string, v: string, c = 'ok') => `<div class="row"><span class="k">${k}</span><span class="${c}">${v}</span></div>`;
+const lookDir = new THREE.Vector3();
 const wrapPi = (a: number) => ((((a + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) - Math.PI;
 const ui = new UI({
   sim, dir, openComms: () => openComms(), clockText: () => new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC', flare: () => flare,
@@ -233,14 +229,16 @@ function frame() {
   const running = started && (locked || comms.isOpen || ui.isTabletOpen), w = clockRate(), dtSim = running ? dt * w : 0;
   simMs += dtSim * 1000; sim.cmdExposed = hab?.exposed ?? false;
   sim.step(dtSim); dir.frame(dtSim / 3600, running ? dt : 0); ui.frame(dt);
+  camera.getWorldDirection(lookDir);
   if (hab) {
     hab.shelter = !!rover && rover.inside;
+    hab.update(dt, Math.min(dtSim, dt * 60), camera.position, sim, lookDir);
     hab.update(dt, Math.min(dtSim, dt * 60), camera.position, sim);
     if (running) crew?.update(dt, camera.position);
     visorEl.classList.toggle('on', hab.suitOn);
   }
   if (rover && hab) {
-    const r = rover.update(dt, Math.min(dtSim, dt * 60), { player: camera.position, suitOn: hab.suitOn, keys, sim, hab: dishPos });
+    const r = rover.update(dt, Math.min(dtSim, dt * 60), { player: camera.position, suitOn: hab.suitOn, keys, sim, hab: dishPos, look: lookDir });
     yaw += r.dHeading;
     if (rover.pendingExit) { camera.position.x = rover.pendingExit.x; camera.position.z = rover.pendingExit.y; camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE; vy = 0; yaw = rover.heading + Math.PI; rover.pendingExit = null; }
   }
@@ -283,6 +281,11 @@ function frame() {
   const vel = inRover ? 0 : Math.hypot(camera.position.x - px0, camera.position.z - pz0) / Math.max(dt, 1e-4);
   bobT += vel * dt * 2.1; const bk = onGround ? Math.min(1, vel / 1.2) : 0;
   camera.rotation.set(pitch + Math.sin(bobT * 2) * 0.0045 * bk, yaw, Math.sin(bobT) * 0.0035 * bk, 'YXZ');
+  if (inRover && rover) {
+    camera.quaternion.premultiply(rover.tiltQ); // the cabin pitches and rolls with the terrain
+    const sh = rover.shake * (rover.mode === 'driving' ? 1 : 0.5), t = performance.now() / 1000;
+    if (sh > 0.001) { camera.rotateX(Math.sin(t * 41) * 0.012 * sh + Math.sin(t * 17.3) * 0.01 * sh); camera.rotateZ(Math.sin(t * 29) * 0.014 * sh); camera.position.y += Math.sin(t * 53) * 0.025 * sh; }
+  }
   lamp.visible = !!hab && hab.exposed && hab.suitOn;
   player.update(dt, camera.position, yaw, vel, onGround, !!hab?.suitOn, comms.padOpen, !!hab?.exposed);
 
