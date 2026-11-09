@@ -68,6 +68,7 @@ function aoBlob(w: number, d: number) {
 
 export class Hab {
   prompt = ''; toast = ''; suitHours = EVA_H; exposed = false; where = 'HAB';
+  curtains: THREE.Group[] = []; bags: THREE.Object3D[] = [];
   suitState: 'rack' | 'donning' | 'on' | 'doffing' = 'rack';
   taskLabel = ''; taskProgress = 0; onComms: (() => void) | null = null;
   shelter = false; // set while the player is in a pressurised vehicle
@@ -186,7 +187,7 @@ export class Hab {
     fit(-0.3 * P, { w: 2.0, h: 0.95, color: 0xdfe3e8, text: 'GALLEY' }); fit(0.9 * P, { w: 1.4, h: 1.4, color: 0xf6f7f9, text: 'MEDICAL', accent: NASA.red });
     for (const th of [0.28 * P, 0.5 * P, 0.72 * P]) {
       fit(th, { w: 2.0, h: 0.5, y: 0.25, d: 0.95, color: 0xc4ceda, accent: null }); fit(th, { w: 2.0, h: 0.5, y: 1.3, d: 0.95, color: 0xc4ceda, accent: null });
-      fit(th, { w: 2.0, h: 1.9, d: 0.04, r: 4.35, color: 0x2c5aa0, accent: null, text: th === 0.5 * P ? 'CREW QUARTERS' : undefined });
+      this.curtains.push(fit(th, { w: 2.0, h: 1.9, d: 0.04, r: 4.35, color: 0x2c5aa0, accent: null, text: th === 0.5 * P ? 'CREW QUARTERS' : undefined }));
     }
     // suit rack: five human-shaped EVA suits hanging from a rail, facing the room
     const rackTh = -0.13 * P, rg = fit(rackTh, { w: 2.9, h: 2.05, d: 0.15, r: 5.2, color: 0x59626d, text: 'EVA SUITS', accent: NASA.red });
@@ -241,7 +242,8 @@ export class Hab {
         const bg = at(th, r0);
         for (const [j, y] of [0.87, 1.92].entries()) {
           if (i === 2 && j === 1) { for (let k = 0; k < 3; k++) mesh(rbox(0.5, 0.28, 0.4, 0.06), mat([0x39424d, 0x4a5668, 0x2c5aa0][k], false, 0.9, 0), 0.0, y + 0.0, -0.6 + k * 0.6, bg, true); continue; }
-          mesh(new THREE.CapsuleGeometry(0.17, 1.3, 6, 14).rotateX(P / 2), mat([0x3a5f9a, 0x6b7f8f, 0x7a4b3a, 0x40664f, 0x5b4a7a][(i * 2 + j) % 5], false, 0.9, 0), 0.03, y, 0.05, bg, true);
+          const bagM = mesh(new THREE.CapsuleGeometry(0.17, 1.3, 6, 14).rotateX(P / 2), mat([0x3a5f9a, 0x6b7f8f, 0x7a4b3a, 0x40664f, 0x5b4a7a][(i * 2 + j) % 5], false, 0.9, 0), 0.03, y, 0.05, bg, true);
+          if (j === 0) this.bags[i] = bagM;   // lower-bunk sleeping bag: the crew hides it while a sleeper is in that bay
           mesh(rbox(0.34, 0.1, 0.4, 0.04), wh, 0.03, y + 0.02, -0.78, bg, true);
         }
       }
@@ -357,6 +359,8 @@ export class Hab {
     return this.circles.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + PR);
   }
   inHab(x: number, z: number) { return Math.hypot(x, z) < HAB_R - 0.2; }
+  /** visual-only door control for the crew (does not touch airlock pressure or sim state) */
+  setDoor(lock: number, which: 'inner' | 'outer', open: boolean) { const l = this.locks[lock]; if (l) l[which].open = open; }
   /** Vehicle-sized obstacle test: the drum and both airlock tunnels. */
   solid(x: number, z: number, r: number): boolean {
     if (Math.hypot(x, z) < HAB_R + 0.4 + r) return true;

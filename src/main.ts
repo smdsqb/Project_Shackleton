@@ -1,3 +1,4 @@
+import { Crew } from './crew';
 import * as THREE from 'three';
 import { heightAt, isSunlit, rand, loadTerrain, getSite } from './terrain';
 import { buildExterior, propBlocked, propHit } from './exterior';
@@ -97,6 +98,7 @@ function buildWorld() {
 
   const gy = heightAt(0, 0);
   hab = new Hab(scene, gy);
+  crew = new Crew(scene, heightAt, hab);
   hab.onComms = () => openComms('hab');
   dishPos.set(0, gy + WALL_H + CAP_H + 0.9, 0);
   arrayPos.set(14, heightAt(14, 6) + 12, 6);
@@ -112,6 +114,7 @@ function buildWorld() {
 const sim = new Sim();
 const dir = new Director(sim);
 let hab: Hab | null = null;
+let crew: Crew | null = null;
 let rover: Rover | null = null;
 let started = false;
 const player = new Player(scene, camera);
@@ -228,6 +231,7 @@ function frame() {
   if (hab) {
     hab.shelter = !!rover && rover.inside;
     hab.update(dt, Math.min(dtSim, dt * 60), camera.position, sim);
+    crew?.update(dt, camera.position);
     visorEl.classList.toggle('on', hab.suitOn);
   }
   if (rover && hab) {
