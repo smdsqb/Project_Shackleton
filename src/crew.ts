@@ -11,7 +11,7 @@ import { HAB_R } from './hab';
 
 type Pose = Record<string, number>;
 type Slot = 'sleep' | 'window' | 'comms' | 'eva';
-export type CrewHab = { curtains: THREE.Group[]; setDoor(lock: number, which: 'inner' | 'outer', open: boolean): void };
+export type CrewHab = { curtains: THREE.Group[]; bags: THREE.Object3D[]; setDoor(lock: number, which: 'inner' | 'outer', open: boolean): void };
 
 const { sin, cos, abs, min, max, PI, atan2, hypot, sqrt } = Math;
 const TAU = PI * 2, TL = 2.2;
@@ -480,6 +480,7 @@ export class Crew {
     this.hab.curtains.forEach((g, i) => { // bunk curtain draws back while someone is in the bay
       const occ = this.bots.some((b) => b.sleepStage > 0 && b.bay === i) ? 1 : 0; this.open[i] += (occ - this.open[i]) * min(1, dt * 1.5);
       const m = g.children[0]; if (m) { m.scale.z = lerp(1, 0.3, this.open[i]); m.position.z = lerp(0, 0.7, this.open[i]); } if (g.children[1]) g.children[1].visible = this.open[i] < 0.5;
+      if (this.hab.bags[i]) this.hab.bags[i].visible = !occ;
     });
   }
 }

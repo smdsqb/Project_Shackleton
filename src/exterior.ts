@@ -7,6 +7,8 @@ import { WALL_H, CAP_H } from './hab';
 // before, so terrain shadowing still decides whether it is lit), propellant/O2 tanks, battery bank, radiator and flag.
 const circles: { x: number; z: number; r: number }[] = [];
 export const propBlocked = (x: number, z: number) => circles.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + 0.3);
+/** Same props, tested with a circle of radius r (for the rover). */
+export const propHit = (x: number, z: number, r: number) => circles.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + r);
 
 const rbox = (w: number, h: number, d: number, r = 0.05) => new RoundedBoxGeometry(w, h, d, 3, Math.max(0.002, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001)));
 // three.js makes Object3D.position read-only, so it cannot be set through Object.assign.
