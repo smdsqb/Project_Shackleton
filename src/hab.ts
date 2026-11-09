@@ -366,7 +366,7 @@ export class Hab {
 
   press() { if (this.best) { this.toast = this.best.run(); this.toastT = 2.8; } }
 
-  update(dt: number, dtSim: number, p: THREE.Vector3, sim: Sim) {
+  update(dt: number, dtSim: number, p: THREE.Vector3, sim: Sim, look?: THREE.Vector3) {
     this.clock += dt;
     // power-aware lighting: slow mains wander, brown-out when the battery is low, red emergency lighting when the bus is dead
     const target = sim.lightK; // 1 with the lights bus powered, dim red emergency light when you switch them off or the bus browns out
@@ -396,7 +396,13 @@ export class Hab {
     if (this.suitOn && this.exposed) this.suitHours = Math.max(0, this.suitHours - dtSim / 3600);
     this.toastT -= dt; if (this.toastT <= 0) this.toast = '';
     let best: Item | null = null, bd = 1e9;
-    for (const i of this.items) { const d = Math.hypot(p.x - i.x, p.z - i.z); if (d < i.reach && d < bd) { best = i; bd = d; } }
+    // a prompt appears only for the thing you are standing at AND facing (horizontal gaze within ~55 degrees)
+    const lh = look ? Math.hypot(look.x, look.z) : 0;
+    for (const i of this.items) {
+      const dx = i.x - p.x, dz = i.z - p.z, d = Math.hypot(dx, dz); if (d >= i.reach) continue;
+      if (look && lh > 0.2 && d > 0.55 && (dx * look.x + dz * look.z) / (d * lh) < 0.57) continue;
+      if (d < bd) { best = i; bd = d; }
+    }
     this.best = best; this.prompt = best ? best.text() : '';
   }
 

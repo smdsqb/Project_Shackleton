@@ -154,10 +154,10 @@ function cleanTele(t: Record<string, unknown> = {}) {
 function cleanRover(r: unknown) {
   if (!r || typeof r !== 'object') return null;
   const o = r as Record<string, unknown>, mode = str(o.mode, 8);
-  return { mode: ['out', 'cabin', 'driving'].includes(mode) ? mode : 'out', batteryPct: num(o.batteryPct, 0, 100), speedKph: num(o.speedKph, 0, 100), distM: num(o.distM, 0, 1e6), headingDeg: num(o.headingDeg, 0, 360), linkUp: !!o.linkUp };
+  return { mode: ['out', 'cabin', 'driving'].includes(mode) ? mode : 'out', batteryPct: num(o.batteryPct, 0, 100), speedKph: num(o.speedKph, 0, 100), distM: num(o.distM, 0, 1e6), headingDeg: num(o.headingDeg, 0, 360), linkUp: !!o.linkUp, damagePct: num(o.damagePct, 0, 100) };
 }
 const roverLine = (t: Tele) =>
-  t.rover ? `Rover: ${t.rover.mode === 'driving' ? `driving at ${t.rover.speedKph.toFixed(1)} km/h` : t.rover.mode === 'cabin' ? 'parked with crew aboard' : 'parked at the pad'}, heading ${t.rover.headingDeg.toFixed(0)} deg, ${(t.rover.distM / 1000).toFixed(2)} km from the Hab, battery ${t.rover.batteryPct.toFixed(0)}%.` : '';
+  t.rover ? `Rover: ${t.rover.mode === 'driving' ? `driving at ${t.rover.speedKph.toFixed(1)} km/h` : t.rover.mode === 'cabin' ? 'parked with crew aboard' : 'parked at the pad'}, heading ${t.rover.headingDeg.toFixed(0)} deg, ${(t.rover.distM / 1000).toFixed(2)} km from the Hab, battery ${t.rover.batteryPct.toFixed(0)}%, damage ${t.rover.damagePct.toFixed(0)}%.` : '';
 
 const CREW = (who: string, other: string, emerg: boolean) =>
 `You are ${who}, a crew member of Project Shackleton, a lunar south pole outpost, talking on the local UHF radio with ${other}. This is a training simulator for kids and teens and you are simulated: if sincerely asked whether you are real, say so plainly and kindly.
