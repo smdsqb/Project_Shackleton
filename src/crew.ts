@@ -287,19 +287,30 @@ const TASKS: TaskDef[] = [
   { id: 'inspect', slot: 'eva', w: 1.5, dur: [70, 100], stops: () => [
     { x: 10.2, z: -7.4, yaw: PI, anim: 'tablet', dwell: rnd(14, 20), eva: true }, { x: -6.5, z: 9.5, yaw: -PI / 2, anim: 'tablet', dwell: rnd(14, 20), eva: true }, { x: -4.8, z: -11, yaw: -PI / 2, anim: 'tablet', dwell: rnd(14, 20), eva: true }] },
 ];
+// where each crew member stands when the hab is on alert: the open floor in the middle, clear of the lab tables and the galley
+const shelterSpot = (i: number): Stop => ({ x: [-1.2, -0.4, 0.4, 1.2][i % 4], z: i % 2 ? -0.35 : 0.4, yaw: PI, anim: 'tablet', dwell: 1e9 });
 const NEXT: Record<Slot, Slot> = { sleep: 'window', window: 'comms', comms: 'eva', eva: 'sleep' };
 
 // ---------------------------------------------------------------- one crew member
 class Bot {
   rig: Rig; x = 0; z = 0; yaw = 0; v = 0; phase = Math.random() * TAU; t = Math.random() * 50; ph0 = Math.random() * 10;
   eva = false; slot: Slot = 'window'; task: TaskDef | null = null; taskLeft = 0; stops: Stop[] = []; si = 0; dwell = 0; doing = false;
-  nodes: Node[] = []; waitLeft = 0; sleepStage = 0; bay = 0; pending: Slot | null = null; hold = 0; waitFor: Bot | null = null;
+  nodes: Node[] = []; waitLeft = 0; hurry = false; sleepStage = 0; bay = 0; pending: Slot | null = null; hold = 0; waitFor: Bot | null = null;
   cur: Pose = { ...BASE }; py = 0.9; roll = 0; rollT = rnd(40, 90); blink = 0; blinkT = rnd(1, 4); sacT = 0; sac: [number, number] = [0, 0];
   gaze: [number, number] = [0, 0]; glance = 0; glanceT = rnd(6, 16); talk = 0; cruise: number;
   constructor(public spec: Spec, private crew: Crew) { this.rig = build(spec); this.cruise = 1.05 * spec.tempo; this.setEva(false); }
 
   setEva(on: boolean) { this.eva = on; for (const o of this.rig.ind) o.visible = !on; for (const o of this.rig.skinEx) o.visible = !on; for (const o of this.rig.eva) o.visible = on; }
   get asleep() { return this.sleepStage === 3; }
+
+  /** Drop everything and run for the shelter spot, wherever you are: asleep, at a console, or out on the surface. */
+  recall(i: number) {
+    if (this.pending) this.slot = this.pending; // a shift change in progress is committed, not dropped, so the roster stays complete
+    this.pending = null; this.waitFor = null; this.hold = 0; this.waitLeft = 0; this.hurry = true;
+    const s = shelterSpot(i); this.task = { id: 'shelter', slot: this.slot, w: 0, dur: [1e9, 1e9], stops: () => [s] }; this.taskLeft = 1e9; this.stops = [s]; this.goStop(0);
+  }
+  /** All clear: back to the duty roster. */
+  release() { this.hurry = false; this.task = null; this.assign(this.slot, false); }
 
   assign(slot: Slot, immediate: boolean, bay?: number) {
     this.slot = slot; if (bay !== undefined) this.bay = bay;
@@ -342,7 +353,7 @@ class Bot {
       case 'sit': this.sleepStage = 1; break; case 'lie': this.sleepStage = 2; break; case 'asleep': this.sleepStage = 3; this.rollT = rnd(40, 90); break;
       case 'sit-up': this.sleepStage = 1; break; case 'stand': this.sleepStage = 0; break;
     }
-    if (n.wait) this.waitLeft = n.wait;
+    if (n.wait) this.waitLeft = n.wait * (this.hurry ? 0.3 : 1);
   }
   private circles() { return this.eva ? PROPS.concat(extraObstacles(), [{ x: 0, z: 0, r: HAB_R + 1.3 }]) : ROOM; }
 
@@ -363,7 +374,7 @@ class Bot {
           if (od < R + 1.2 && od > 0.01) { const w = clamp((R + 1.2 - od) / 1.2, 0, 1) * (od < R ? 2.5 : 1.4), tx = -oz / od, tz = ox / od, side = dx * tx + dz * tz >= 0 ? 1 : -1; dx += ((ox / od) * 0.9 + tx * side * 1.3) * w; dz += ((oz / od) * 0.9 + tz * side * 1.3) * w; }
         }
         const m = hypot(dx, dz) || 1; dx /= m; dz /= m;
-        const cr = (n.speed ?? this.cruise * (this.eva ? 1.55 : 1)), tv = this.nodes.length === 1 ? min(cr, 0.35 + d * 0.9) : cr;
+        const cr = n.speed !== undefined ? n.speed * (this.hurry ? 2 : 1) : this.cruise * (this.eva ? 1.55 : 1) * (this.hurry ? 1.7 : 1), tv = this.nodes.length === 1 ? min(cr, 0.35 + d * 0.9) : cr;
         const da = wrap(atan2(dx, dz) - this.yaw); this.yaw += clamp(da, -3.2 * dt, 3.2 * dt);
         this.v += (tv * max(0, cos(da)) - this.v) * min(1, dt * 3);
         this.x += sin(this.yaw) * this.v * dt; this.z += cos(this.yaw) * this.v * dt; moving = this.v > 0.12;
@@ -464,12 +475,22 @@ class Bot {
 
 // ---------------------------------------------------------------- crew manager
 export class Crew {
-  bots: Bot[] = []; private next = rnd(CREW_CFG.rotateMin, CREW_CFG.rotateMax); private open = [0, 0, 0];
+  bots: Bot[] = []; alert = false; private next = rnd(CREW_CFG.rotateMin, CREW_CFG.rotateMax); private open = [0, 0, 0];
   constructor(scene: THREE.Scene, readonly ground: (x: number, z: number) => number, readonly hab: CrewHab) {
     for (const s of ROSTER) { const b = new Bot(s, this); this.bots.push(b); scene.add(b.rig.root); }
     const slots: Slot[] = ['sleep', 'window', 'comms', 'eva'];
     this.bots.forEach((b, i) => b.assign(slots[i], true, i === 0 ? 1 : undefined));
   }
+  /** Shelter / lockdown order. On: every crew member hauls back to the hab and the duty roster freezes. Off: everyone resumes. */
+  setAlert(on: boolean) {
+    if (on === this.alert) return; this.alert = on;
+    if (on) { for (const k of [0, 1]) { this.hab.setDoor(k, 'inner', false); this.hab.setDoor(k, 'outer', false); } this.bots.forEach((b, i) => b.recall(i)); }
+    else { this.bots.forEach((b) => b.release()); this.next = rnd(CREW_CFG.rotateMin, CREW_CFG.rotateMax); }
+  }
+  /** crew members currently outside the pressure hull */
+  get outside() { return this.bots.filter((b) => b.eva).length; }
+  /** true once everyone is back inside and standing at their shelter spot */
+  get allIn() { return this.bots.every((b) => !b.eva && b.doing && b.nodes.length === 0); }
   /** floor height under a point: hab/airlock decking sits 3 cm above the pad */
   floor(x: number, z: number) { const inH = hypot(x, z) < HAB_R || (abs(z) < 0.9 && abs(x) < HAB_R + TL); return this.ground(x, z) + (inH ? 0.03 : 0); }
   private by(s: Slot) { return this.bots.find((b) => (b.pending ?? b.slot) === s)!; }
@@ -483,7 +504,8 @@ export class Crew {
   }
   update(dt: number, cam: THREE.Vector3) {
     dt = min(dt, 0.1);
-    this.next -= dt; if (this.next <= 0 && this.bots.every((b) => !b.pending)) { this.rotate(); this.next = rnd(CREW_CFG.rotateMin, CREW_CFG.rotateMax); }
+    if (!this.alert) this.next -= dt;
+    if (!this.alert && this.next <= 0 && this.bots.every((b) => !b.pending)) { this.rotate(); this.next = rnd(CREW_CFG.rotateMin, CREW_CFG.rotateMax); }
     for (const b of this.bots) b.update(dt, cam);
     this.hab.curtains.forEach((g, i) => { // bunk curtain draws back while someone is in the bay
       const occ = this.bots.some((b) => b.sleepStage > 0 && b.bay === i) ? 1 : 0; this.open[i] += (occ - this.open[i]) * min(1, dt * 1.5);

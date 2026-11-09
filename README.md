@@ -24,6 +24,16 @@ Keep 5 crew alive at Shackleton for 14 days. The sim (`src/sim.ts`) couples powe
 - Clock: one fixed rate (600x, so 14 days take about 35 minutes) that eases to 60x on its own during a decision card or an EVA. No player-controlled time warp. Keys: M tablet, P array, 1-3 decide, H ask Houston, E interact. Food production is deliberately left out of this version.
 - Training tempo: events are far more frequent than in reality. `SIM.commsAlwaysOn` keeps the Earth link up regardless of line of sight; set it to `false` for the strict rules.
 
+### Crises (17 types, about 30 per mission) and what they force you to do
+
+Every crisis stays open until the crew acts on it, and the open ones get worse. At most three are ever open at once.
+
+- **Dust storm (lockdown):** electrostatic dust (the Moon has no wind). Fog and drifting dust build outside, the Hab portholes go opaque, hatches seal from the inside, walking drops to a slow pace with no sprint or jump, and the tablet opens so eyes go to the systems. Everyone outside is called in.
+- **Meteoroid swarm (lockdown), moonquake** (camera shake, hidden damage you must inspect for), **battery thermal runaway, electrical fire, water line rupture, coolant pump failure, solar radio blackout, crew injury, array string fault, pressure sensor alarm** (real leak or bad sensor? verify first), plus dust cloud, solar storm, hull breach, scrubber, oxygenator and antenna faults.
+- **Shelter / lockdown recall:** pressing "enter storm shelter" on the tablet, choosing SHELTER NOW, or any lockdown makes every crew member (including the sleeper and whoever is on EVA) drop what they are doing and run back to the hab. The duty roster freezes until the all-clear, and anyone still outside takes the full dose. If you are outside, a repeating alarm and a flashing banner tell you to get in, and hatches never lock you out from the surface.
+- Emergencies pull the crew off their current task; you can also stop a task from the tablet (progress is lost).
+- Keys: **Tab closes the comms desk and the radio pad** (Esc is only pause).
+
 ## Real terrain (LRO LOLA)
 
 The sim loads `public/terrain/shackleton.{json,bin}` when present and falls back to procedural terrain otherwise. The tile is baked from `LDEM_875S_5M` (5 m/px, 87.5 S to the pole) by `scripts/bake-terrain.mjs`, which reads everything it needs from the product's `.LBL`, detects the raster's axis orientation from the data, picks the best-lit spot on Shackleton's rim, and rotates the tile into the simulator's frame (+x east, +z south) so the Horizons Sun and Earth directions line up with the terrain shadows.

@@ -17,6 +17,7 @@ const CSS = `
 #decision .opt{display:flex;gap:10px;padding:6px 8px;margin:4px 0;border:1px solid rgba(255,255,255,.18);cursor:pointer}#decision .opt:hover{border-color:#4fd8ff;background:rgba(79,216,255,.08)}#decision .opt b{color:#4fd8ff;font-weight:400}#decision .opt small{display:block;color:#8d98a6;font-size:11px}
 #decision .t{height:4px;background:rgba(255,255,255,.14);margin:8px 0}#decision .t i{display:block;height:100%;background:#ff5a5a;width:100%}#decision .ask{font-size:11px;color:#9aa6b4;min-height:18px}#decision .ask.rx{color:#7ee787}
 #result{position:fixed;top:11vh;left:50%;transform:translateX(-50%);width:min(560px,90vw);display:none;z-index:5;background:rgba(4,10,16,.92);border-left:3px solid #ffb000;padding:10px 14px;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#e8edf3}
+#banner{position:fixed;top:4vh;left:50%;transform:translateX(-50%);display:none;z-index:4;padding:8px 22px;font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.2em;color:#fff;background:rgba(160,20,20,.88);border:1px solid #ff8a7a;pointer-events:none}#banner.bad{animation:bn .8s steps(2) infinite}#banner.calm{background:rgba(30,60,90,.88);border-color:#4fd8ff;animation:none}@keyframes bn{50%{background:rgba(90,10,10,.88)}}
 #alerts{position:fixed;top:14px;right:16px;z-index:2;text-align:right;font:11px/1.7 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.1em;pointer-events:none}#alerts .warning{color:#ff5a5a}#alerts .caution{color:#ffb000}#alerts .info{color:#9aa6b4}
 #endscr{position:fixed;inset:0;display:none;z-index:9;background:rgba(2,5,9,.96);align-items:center;justify-content:center;font:13px/1.6 ui-monospace,Menlo,Consolas,monospace;color:#d7dde5}#endscr .box{width:min(720px,92vw);max-height:90vh;overflow:auto;padding:24px}#endscr h1{font-weight:400;letter-spacing:.2em;font-size:22px;margin:0 0 4px}#endscr .big{font-size:64px;line-height:1}#endscr .row{display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.1);padding:3px 0}#endscr button{margin-top:16px;font:inherit;letter-spacing:.16em;color:#05070a;background:#ffb000;border:0;padding:10px 22px;cursor:pointer}`;
 
@@ -27,9 +28,14 @@ export type UiHost = { sim: Sim; dir: Director; openComms(): void; onTabletClose
 
 let ac: AudioContext | null = null;
 export function ensureAudio() { try { ac ??= new AudioContext(); void ac.resume(); } catch { /* no audio */ } }
-export function beep(kind: 'warn' | 'event' | 'ok') {
-  if (!ac) return; const seq = kind === 'warn' ? [[880, 0], [660, 0.18]] : kind === 'event' ? [[740, 0], [740, 0.22], [988, 0.44]] : [[523, 0], [784, 0.12]];
-  for (const [fr, t] of seq) { const o = ac.createOscillator(), g = ac.createGain(); o.type = 'square'; o.frequency.value = fr; g.gain.setValueAtTime(0.0001, ac.currentTime + t); g.gain.exponentialRampToValueAtTime(0.07, ac.currentTime + t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + t + 0.16); o.connect(g).connect(ac.destination); o.start(ac.currentTime + t); o.stop(ac.currentTime + t + 0.2); }
+export function rumble(sec: number) { // low rumble for a moonquake
+  if (!ac) return; const n = Math.floor(ac.sampleRate * sec), b = ac.createBuffer(1, n, ac.sampleRate), d = b.getChannelData(0); let last = 0;
+  for (let i = 0; i < n; i++) { last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = last * 3.5 * Math.min(1, i / 4000) * Math.min(1, (n - i) / 8000); }
+  const s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain(); s.buffer = b; f.type = 'lowpass'; f.frequency.value = 110; g.gain.value = 1.6; s.connect(f).connect(g).connect(ac.destination); s.start();
+}
+export function beep(kind: 'warn' | 'event' | 'ok' | 'recall') {
+  if (!ac) return; const seq = kind === 'recall' ? [[1040, 0], [760, 0.14], [1040, 0.28], [760, 0.42]] : kind === 'warn' ? [[880, 0], [660, 0.18]] : kind === 'event' ? [[740, 0], [740, 0.22], [988, 0.44]] : [[523, 0], [784, 0.12]];
+  for (const [fr, t] of seq) { const o = ac.createOscillator(), g = ac.createGain(); o.type = 'square'; o.frequency.value = fr; g.gain.setValueAtTime(0.0001, ac.currentTime + t); g.gain.exponentialRampToValueAtTime(kind === 'recall' ? 0.14 : 0.07, ac.currentTime + t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + t + 0.16); o.connect(g).connect(ac.destination); o.start(ac.currentTime + t); o.stop(ac.currentTime + t + 0.2); }
 }
 
 export class UI {
@@ -57,7 +63,7 @@ export class UI {
       ${row('rate', 'Dose rate (crew)')}${row('dose', 'Crew dose')}${bar('dose')}${row('cdose', 'Your dose')}${row('shield', 'Soil cover on hab')}${row('spe', 'Solar storm')}${row('flare', 'Real flare (NASA DONKI)')}
       <div><button data-act="shelter">CREW: STORM SHELTER</button></div></section>
      <section><h3>CREW WORK AND MISSION</h3><div class="sub">The crew can do one job at a time. Their hours are a resource too.</div>
-      ${row('day', 'Mission day')}${bar('day')}${row('health', 'Crew health')}${bar('health')}${row('morale', 'Morale')}${row('sci', 'Science done')}${row('job', 'Current job')}${bar('job')}
+      ${row('lock', 'Lockdown')}${row('crewout', 'Crew outside')}${row('day', 'Mission day')}${bar('day')}${row('health', 'Crew health')}${bar('health')}${row('morale', 'Morale')}${row('sci', 'Science done')}${row('job', 'Current job')}${bar('job')}<div><button data-act="stopjob">STOP CURRENT TASK</button></div>
       ${(Object.keys(JOBS) as JobId[]).map((id) => `<button data-job="${id}" title="${JOBS[id].why}">${JOBS[id].name.toUpperCase()} · ${JOBS[id].hours} H${JOBS[id].kw ? ' · ' + JOBS[id].kw + ' KW' : ''}</button>`).join('')}
       <div class="sub" style="margin-top:8px">LOG</div><div class="log" data-k="log"></div></section></div>`;
     document.body.append(this.ops);
@@ -66,6 +72,7 @@ export class UI {
     this.ops.addEventListener('click', (e) => {
       const t = (e.target as HTMLElement).closest('button') as HTMLElement | null; if (!t) return; const s = h.sim;
       if (t.dataset.job) { const r = s.startJob(t.dataset.job as JobId); if (r) this.flash(r); }
+      else if (t.dataset.act === 'stopjob') s.cancelJob();
       else if (t.dataset.act === 'close') this.close(); else if (t.dataset.act === 'comms') { this.close(true); h.openComms(); }
       else if (t.dataset.act?.startsWith('array:')) s.setArray(t.dataset.act.slice(6) as never);
       else if (t.dataset.act === 'shelter') { s.shelter = !s.shelter; s.shelterAt = Infinity; s.say(s.shelter ? 'Crew ordered into the storm shelter.' : 'Crew ordered out of the storm shelter.'); }
@@ -84,6 +91,13 @@ export class UI {
     h.dir.onResolve = (m) => { this.card.style.display = 'none'; this.lastEvent = null; this.res.textContent = m; this.res.style.display = 'block'; this.resT = 9; beep('ok'); };
   }
 
+  private bannerEl: HTMLElement | null = null; private bannerText = '';
+  /** Big banner for lockdown / recall. null hides it. */
+  banner(text: string | null, tone: 'bad' | 'calm' = 'bad') {
+    if (!this.bannerEl) { this.bannerEl = document.createElement('div'); this.bannerEl.id = 'banner'; document.body.append(this.bannerEl); }
+    const key = text ? tone + text : ''; if (key === this.bannerText) return; this.bannerText = key;
+    this.bannerEl.style.display = text ? 'block' : 'none'; this.bannerEl.className = tone; this.bannerEl.textContent = text ?? '';
+  }
   flash(m: string) { this.res.textContent = m; this.res.style.display = 'block'; this.resT = 4; }
   open() { if (this.isTabletOpen) return; this.isTabletOpen = true; this.ops.classList.add('on'); this.refresh(true); this.iv = window.setInterval(() => this.refresh(), 400); setTimeout(() => this.ops.focus(), 0); }
   close(silent = false) { if (!this.isTabletOpen) return; this.isTabletOpen = false; this.ops.classList.remove('on'); clearInterval(this.iv); if (!silent) this.h.onTabletClose(); }
@@ -114,7 +128,7 @@ export class UI {
 
   private refresh(first = false) {
     const s = this.h.sim, set = (k: string, t: string, c = '') => { const e = this.k.get(k); if (e) { e.textContent = t; e.className = c; } }, bar = (k: string, v: number, c = '') => { const e = this.bars.get(k); if (e) { e.style.width = `${Math.max(0, Math.min(100, v))}%`; if (c) e.style.background = c; } };
-    const b = (s.batteryKwh / SIM.batteryCapKwh) * 100, mm = (n: number) => `${Math.floor(n / 24)}d ${Math.floor(n % 24)}h`;
+    const b = (s.batteryKwh / s.batteryCap) * 100, mm = (n: number) => `${Math.floor(n / 24)}d ${Math.floor(n % 24)}h`;
     set('clock', this.h.clockText());
     set('gen', `${f(s.genKw)} kW`, s.genKw > 0 ? 'ok' : 'warn'); set('load', `${f(s.loadKw)} kW`, cls(s.loadKw > s.genKw + 25, s.loadKw > s.genKw));
     set('batt', `${pct(b)} · ${s.batteryHours > 900 ? 'charging' : f(s.batteryHours, 0) + ' h left'}`, cls(b < 10, b < 25)); bar('batt', b, b < 25 ? '#ff5a5a' : '#4fd8ff');
@@ -129,6 +143,7 @@ export class UI {
     set('rate', `${f(s.doseRateMsvH * 24, 2)} mSv/day`, cls(s.doseRateMsvH * 24 > 20, s.doseRateMsvH * 24 > 3)); set('dose', `${f(s.doseMsv, 1)} / 250 mSv`, cls(s.doseMsv > 250, s.doseMsv > 125)); bar('dose', (s.doseMsv / 250) * 100, s.doseMsv > 125 ? '#ff5a5a' : '#4fd8ff');
     set('cdose', `${f(s.cmdDoseMsv, 1)} mSv${s.cmdExposed ? ' · OUTSIDE' : s.shelter ? ' · sheltered' : ''}`); set('shield', `${f(s.shieldM, 1)} m`, s.shieldM > 0 ? 'ok' : 'warn');
     set('spe', s.spe ? (s.t < s.spe.arrive ? `S${s.spe.cls} arriving in ${f(s.speEtaH * 60, 0)} min` : `S${s.spe.cls} active · ${f(s.speRateUnshielded(), 1)} mSv/h outside`) : 'none', s.spe ? 'bad' : 'ok'); set('flare', this.h.flare(), s.radMult > 1 ? 'warn' : '');
+    set('lock', s.lockdown ? `${s.lockdown.reason} · ${f(s.lockdown.left, 0)} h` : 'none', s.lockdown ? 'bad' : 'ok'); set('crewout', `${s.crewOutside} of 4`, s.crewOutside > 0 && (s.shelter || s.lockdown) ? 'bad' : '');
     set('day', `${SIM.startDay + Math.floor(s.t / 24)} (${f(s.t / 24, 1)} of ${SIM.missionDays})`); bar('day', (s.t / (SIM.missionDays * 24)) * 100); set('health', pct(s.health), cls(s.health < 40, s.health < 75)); bar('health', s.health, s.health < 50 ? '#ff5a5a' : '#7ee787'); set('morale', pct(s.morale), cls(s.morale < 30, s.morale < 60)); set('sci', pct(s.score().sci));
     set('job', s.job ? `${JOBS[s.job.id].name} · ${f(s.job.left, 1)} h${s.shelter ? ' (paused)' : !s.jobServed ? ' (no power)' : ''}` : 'idle'); bar('job', s.job ? (1 - s.job.left / JOBS[s.job.id].hours) * 100 : 0);
     this.ops.querySelectorAll<HTMLButtonElement>('[data-job]').forEach((x) => { const why = s.canStart(x.dataset.job as JobId); x.disabled = !!why; if (why) x.dataset.why = why; });
