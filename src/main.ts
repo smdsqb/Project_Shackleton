@@ -1,5 +1,5 @@
 import { inject } from '@vercel/analytics';
-import { Crew } from './crew';
+import { Crew, setCrewObstacles } from './crew';
 import * as THREE from 'three';
 import { heightAt, isSunlit, rand, loadTerrain, getSite } from './terrain';
 import { buildExterior, propBlocked, propHit } from './exterior';
@@ -107,6 +107,7 @@ function buildWorld() {
   dishPos.set(0, gy + WALL_H + CAP_H + 0.9, 0);
   arrayPos.set(14, heightAt(14, 6) + 12, 6);
   buildExterior(scene, heightAt, arrayPos);
+  setCrewObstacles(() => (rover ? [{ x: rover.x, z: rover.z, r: 5.6 }] : []));
   rover = new Rover(scene, (x, z, r) => (hab ? hab.solid(x, z, r) : false) || propHit(x, z, r), () => dishPos);
   rover.onRadio = () => openComms('rover');
   camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE;
@@ -235,7 +236,7 @@ function frame() {
   if (hab) {
     hab.shelter = !!rover && rover.inside;
     hab.update(dt, Math.min(dtSim, dt * 60), camera.position, sim);
-    crew?.update(dt, camera.position);
+    if (running) crew?.update(dt, camera.position);
     visorEl.classList.toggle('on', hab.suitOn);
   }
   if (rover && hab) {
