@@ -19,7 +19,7 @@ const DOFF_STAGES = ['VENTING SUIT', 'HELMET AND GLOVES OFF', 'RACKING SUIT, REC
 // portholes: angle psi around the drum (x = cos, z = sin) and height; each is a real hole in the wall
 const WINDOWS = [{ psi: -0.3 * Math.PI, y: 1.65 }, { psi: -0.9 * Math.PI, y: 1.7 }, { psi: 1.22, y: 1.5 }, { psi: 1.92, y: 1.5 }];
 const WIN_R = 0.29;
-type Door = { open: boolean; k: number; pivot: THREE.Group; lamp: THREE.MeshBasicMaterial; dir: number };
+type Door = { open: boolean; vis?: boolean; k: number; pivot: THREE.Group; lamp: THREE.MeshBasicMaterial; dir: number };
 type Lock = { name: string; ang: number; ca: number; sa: number; p: number; cyc: number | null; inner: Door; outer: Door };
 type Item = { x: number; z: number; reach: number; text: () => string; run: () => string };
 
@@ -247,7 +247,7 @@ export class Hab {
           mesh(rbox(0.34, 0.1, 0.4, 0.04), wh, 0.03, y + 0.02, -0.78, bg, true);
         }
       }
-      { const gg = at(-0.28 * P, r0);   // galley counter fittings
+      { const gg = at(-0.3 * P, r0);   // galley counter fittings
         mesh(rbox(0.5, 0.02, 0.6, 0.008), dk, 0, 0.955, -0.4, gg, true); mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.16, 8), steel, 0.2, 1.03, -0.4, gg, true); mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.14, 8).rotateZ(P / 2), steel, 0.13, 1.1, -0.4, gg, true);
         mesh(rbox(0.4, 0.28, 0.5, 0.03), steel, 0.12, 1.09, 0.45, gg, true); mesh(new THREE.PlaneGeometry(0.3, 0.16), new THREE.MeshBasicMaterial({ map: scr(['FOOD WARMER', 'READY']) }), -0.0815, 1.1, 0.45, gg).rotation.y = -P / 2;
         mesh(rbox(0.36, 0.5, 1.8, 0.03), wh, 0.27, 1.8, 0, gg, true); for (const z of [-0.45, 0.45]) mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.18, 6), steel, 0.08, 1.8, z, gg);
@@ -359,8 +359,8 @@ export class Hab {
     return this.circles.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + PR);
   }
   inHab(x: number, z: number) { return Math.hypot(x, z) < HAB_R - 0.2; }
-  /** visual-only door control for the crew (does not touch airlock pressure or sim state) */
-  setDoor(lock: number, which: 'inner' | 'outer', open: boolean) { const l = this.locks[lock]; if (l) l[which].open = open; }
+  /** Visual-only door swing for the crew: it never touches the real hatch state, so the airlock interlock and the player's collision stay honest. */
+  setDoor(lock: number, which: 'inner' | 'outer', open: boolean) { const l = this.locks[lock]; if (l) l[which].vis = open; }
   /** Vehicle-sized obstacle test: the drum and both airlock tunnels. */
   solid(x: number, z: number, r: number): boolean {
     if (Math.hypot(x, z) < HAB_R + 0.4 + r) return true;
@@ -382,8 +382,8 @@ export class Hab {
     for (const f of this.fans) f.rotation.x += dt * 16 * this.powerK;
     for (const l of this.locks) {
       for (const d of [l.inner, l.outer]) {
-        d.k = Math.min(1, Math.max(0, d.k + (d.open ? 1 : -1) * dt * 1.2)); d.pivot.rotation.y = d.dir * d.k * 1.7;
-        d.lamp.color.setHex(d.open ? 0xffb000 : 0x4fd8ff);
+        d.k = Math.min(1, Math.max(0, d.k + (d.open || d.vis ? 1 : -1) * dt * 1.2)); d.pivot.rotation.y = d.dir * d.k * 1.7;
+        d.lamp.color.setHex(d.open || d.vis ? 0xffb000 : 0x4fd8ff);
       }
       if (l.cyc !== null) {
         const s = (LOCK_P / CYCLE_S) * dt; l.p = l.cyc > l.p ? Math.min(l.cyc, l.p + s) : Math.max(l.cyc, l.p - s);
