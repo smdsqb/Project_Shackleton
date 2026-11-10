@@ -1,16 +1,22 @@
-import { Crew } from './crew';
+import { inject } from '@vercel/analytics';
+import { Crew, setCrewObstacles } from './crew';
 import { CrewTalk } from './crewtalk';
 import * as THREE from 'three';
 import { heightAt, isSunlit, rand, loadTerrain, getSite } from './terrain';
 import { buildExterior, propBlocked, propHit } from './exterior';
 import { Rover } from './rover';
+import { buildRocks, ROCK_CAP } from './rocks';
 import { bodyDir, loadEphemeris } from './ephemeris';
 import { Sim, SIM } from './sim';
 import { Hab, WALL_H, CAP_H } from './hab';
 import { Player } from './player';
 import { Comms, type Link } from './comms';
 import { Director } from './events';
-import { UI, ensureAudio } from './ui';
+import { UI, ensureAudio, beep, rumble } from './ui';
+import { Storm } from './storm';
+
+// Initialize Vercel Web Analytics
+inject();
 
 const MISSION_DAY0 = 214, EYE = 1.7, G = 1.62;
 
@@ -85,16 +91,9 @@ function buildWorld() {
   patch(700, 600, 0, new THREE.MeshStandardMaterial({ color: 0x9a968f, map: tex, bumpMap: tex, bumpScale: 3, roughness: 1 }));
   patch(8000, 200, -0.6, new THREE.MeshStandardMaterial({ color: 0x4f4c48, roughness: 1 }), 340);
 
-  const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshStandardMaterial({ color: 0x5b5853, roughness: 1 }), 1500);
+  const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshStandardMaterial({ color: 0x5b5853, roughness: 1 }), ROCK_CAP);
   const d = new THREE.Object3D(); let n = 0;
-  for (let i = 0; i < 1500; i++) {
-    const x = (rand(i, 1, 99) - 0.5) * 600, z = (rand(i, 2, 99) - 0.5) * 600;
-    if (Math.hypot(x, z) < 22) continue;
-    const s = 0.12 + rand(i, 3, 99) ** 3 * 1.7;
-    d.position.set(x, heightAt(x, z) + s * 0.25, z);
-    d.rotation.set(rand(i, 4, 99) * 6, rand(i, 5, 99) * 6, 0); d.scale.set(s, s * 0.7, s * (0.7 + rand(i, 6, 99) * 0.6));
-    d.updateMatrix(); rocks.setMatrixAt(n++, d.matrix);
-  }
+  for (const r of buildRocks()) { d.position.set(r.x, r.y, r.z); d.rotation.set(r.rx, r.ry, 0); d.scale.set(r.s, r.sy, r.sz); d.updateMatrix(); rocks.setMatrixAt(n++, d.matrix); }
   rocks.count = n; rocks.castShadow = rocks.receiveShadow = true; scene.add(rocks);
 
   const gy = heightAt(0, 0);
@@ -105,6 +104,7 @@ function buildWorld() {
   dishPos.set(0, gy + WALL_H + CAP_H + 0.9, 0);
   arrayPos.set(14, heightAt(14, 6) + 12, 6);
   buildExterior(scene, heightAt, arrayPos);
+  setCrewObstacles(() => (rover ? [{ x: rover.x, z: rover.z, r: 5.6 }] : []));
   rover = new Rover(scene, (x, z, r) => (hab ? hab.solid(x, z, r) : false) || propHit(x, z, r), () => dishPos);
   rover.onRadio = () => openComms('rover');
   camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE;
@@ -115,6 +115,9 @@ function buildWorld() {
 // ---------- sim ----------
 const sim = new Sim();
 const dir = new Director(sim);
+const storm = new Storm(scene);
+(earth.material as THREE.MeshStandardMaterial).fog = false;
+const shakeOff = new THREE.Vector3(); let prevQuake = 0, prevLock = false, recallT = 0;
 let hab: Hab | null = null;
 let crew: Crew | null = null;
 let crewTalk: CrewTalk | null = null;
@@ -133,6 +136,7 @@ function nextAos(): string {
   return '';
 }
 function link(): Link {
+  if (sim.blackoutLeft > 0) return { up: false, reason: `SOLAR RADIO BURST. BLACKOUT FOR ABOUT ${Math.ceil(sim.blackoutLeft)} MORE HOURS.` };
   if (!sim.antennaOk) return { up: false, reason: 'THE ANTENNA GIMBAL IS JAMMED. NO LINK UNTIL IT IS REPAIRED.' };
   if (SIM.commsAlwaysOn) return { up: true, reason: '' };
   if (!(sim.batteryKwh > 0 || sim.genKw >= sim.loadKw)) return { up: false, reason: 'THE COMMS RACK HAS NO POWER.' };
@@ -143,7 +147,7 @@ function telemetry() {
   const o2Days = sim.o2Days;
   return {
     missionDay: MISSION_DAY0 + Math.floor(sim.t / 24), simTime: new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
-    batteryPct: (sim.batteryKwh / SIM.batteryCapKwh) * 100, genKw: sim.genKw, loadKw: sim.loadKw, sunlit: sim.sunlit, o2Kg: sim.o2Kg, o2Days, co2: sim.co2,
+    batteryPct: (sim.batteryKwh / sim.batteryCap) * 100, genKw: sim.genKw, loadKw: sim.loadKw, sunlit: sim.sunlit, o2Kg: sim.o2Kg, o2Days, co2: sim.co2,
     doseMsv: sim.doseMsv, doseRateMsvDay: sim.doseRateMsvH * 24, flare, crew: SIM.crew, alerts: sim.alerts().map((a) => a.text).join('; '), pressureKpa: sim.pressureKpa, tempC: sim.tempC, health: sim.health, ppO2: sim.ppO2,
     location: hab?.where ?? '', suit: hab?.suitState ?? '', suitHours: hab?.suitHours ?? 0, earthElDeg: earthEl * 57.2958,
   };
@@ -169,6 +173,7 @@ renderer.domElement.addEventListener('click', () => { if (!locked && !comms.isOp
 function openComms(mode: 'hab' | 'rover' = 'hab') { keys.clear(); document.exitPointerLock(); comms.open(mode); }
 addEventListener('mousemove', (e) => { if (!locked) return; yaw -= e.movementX * 0.0022; pitch = Math.max(-1.5, Math.min(1.5, pitch - e.movementY * 0.0022)); });
 addEventListener('keydown', (e) => {
+  if (e.code === 'Tab') e.preventDefault();   // Tab closes comms; never let it move browser focus mid-game
   if (comms.isOpen) return;
   ensureAudio();
   const dg = e.code.startsWith('Digit') ? +e.code.slice(5) : 0;
@@ -182,6 +187,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyT' && !e.repeat) { e.preventDefault(); crewTalk?.openText(); return; }
   if (e.code === 'KeyE') { if (rover?.hasPrompt) rover.press(); else hab?.press(); }
   else if (e.code === 'KeyL' && rover?.inside) rover.toggleLights();
+  else if (e.code === 'KeyX' && rover?.mode === 'driving') rover.toggleParkBrake();
   else if (e.code === 'KeyR' && rover?.mode === 'driving') rover.onRadio?.();
   else if (e.code === 'KeyC' && !e.repeat) { if (rover?.inside) rover.onRadio?.(); else void comms.togglePad(); }
   else if (e.code === 'KeyM') { keys.clear(); document.exitPointerLock(); ui.open(); }
@@ -195,6 +201,7 @@ const taskEl = document.getElementById('task')!, taskLbl = taskEl.querySelector(
 const hud = document.getElementById('hud')!, promptEl = document.getElementById('prompt')!, toastEl = document.getElementById('toast')!;
 const cls = (v: boolean, bad = false) => (v ? (bad ? 'bad' : 'warn') : 'ok');
 const row = (k: string, v: string, c = 'ok') => `<div class="row"><span class="k">${k}</span><span class="${c}">${v}</span></div>`;
+const lookDir = new THREE.Vector3();
 const wrapPi = (a: number) => ((((a + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) - Math.PI;
 const ui = new UI({
   sim, dir, openComms: () => openComms(), clockText: () => new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC', flare: () => flare,
@@ -203,7 +210,7 @@ const ui = new UI({
 // one fixed clock; it eases to 60x by itself while a decision card is open or someone is on EVA, so nothing outruns the player
 function clockRate() { const slow = dir.active || hab?.busy || hab?.suitOn || sim.cmdExposed || rover?.inside || rover?.busy; return slow ? 60 : SIM.timeRate; }
 function drawHud(az: number, el: number) {
-  const day = MISSION_DAY0 + Math.floor(sim.t / 24), o2Days = sim.o2Days, b = (sim.batteryKwh / SIM.batteryCapKwh) * 100;
+  const day = MISSION_DAY0 + Math.floor(sim.t / 24), o2Days = sim.o2Days, b = (sim.batteryKwh / sim.batteryCap) * 100;
   hud.innerHTML = `<h1>PROJECT SHACKLETON</h1>` +
     row('SIM CLOCK', new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC') + row('MISSION DAY', `${day} · ${(sim.t / 24).toFixed(1)} / ${SIM.missionDays}`) +
     row('SUN EL / AZ', `${(el * 57.2958).toFixed(2)}° / ${(az * 57.2958).toFixed(0)}°`) +
@@ -219,7 +226,7 @@ function drawHud(az: number, el: number) {
     row('FLARES (3 D)', flare, cls(sim.radMult > 1)) +
     row('COMMS DELAY', `${SIM.commsDelayS.toFixed(2)} s one-way`) +
     row('RADIO', comms.padOpen ? 'OPEN · TAB TO CLOSE' : 'PRESS C TO CALL HOUSTON') +
-    row('EARTH LINK', SIM.commsAlwaysOn ? 'ONLINE · 24x7 TEST MODE' : link().up ? 'ACQUIRED' : 'LOS', link().up ? 'ok' : 'bad') +
+    row('EARTH LINK', !sim.linkOk ? (sim.blackoutLeft > 0 ? 'BLACKOUT' : 'ANTENNA FAULT') : SIM.commsAlwaysOn ? 'ONLINE · 24x7 TEST MODE' : link().up ? 'ACQUIRED' : 'LOS', link().up ? 'ok' : 'bad') +
     row('EARTH IN VIEW', earthVisible ? `YES · EL ${(earthEl * 57.2958).toFixed(1)}°` : 'NO · LINE OF SIGHT BLOCKED', earthVisible ? 'ok' : 'warn') +
     (hab ? hab.status().map(([k, v, c]) => row(k, v, c)).join('') : '') +
     (rover ? rover.status().map(([k, v, c]) => row(k, v, c)).join('') : '');
@@ -231,18 +238,33 @@ let hudT = 0, litT = 0, bobT = 0;
 const fwd = new THREE.Vector3(), rgt = new THREE.Vector3(), mv = new THREE.Vector3(), sd = new THREE.Vector3();
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
+  camera.position.sub(shakeOff); shakeOff.set(0, 0, 0);
   const running = started && (locked || comms.isOpen || ui.isTabletOpen), w = clockRate(), dtSim = running ? dt * w : 0;
   simMs += dtSim * 1000; sim.cmdExposed = hab?.exposed ?? false;
+  if (running) sim.quakeS = Math.max(0, sim.quakeS - dt);
+  if (sim.quakeS > 0 && prevQuake === 0) rumble(sim.quakeS); prevQuake = sim.quakeS;
   sim.step(dtSim); dir.frame(dtSim / 3600, running ? dt : 0); ui.frame(dt);
+  camera.getWorldDirection(lookDir);
   if (hab) {
     hab.shelter = !!rover && rover.inside;
+    hab.update(dt, Math.min(dtSim, dt * 60), camera.position, sim, lookDir);
     hab.update(dt, Math.min(dtSim, dt * 60), camera.position, sim);
-    crew?.update(dt, camera.position);
+    const alertOn = sim.shelter || !!sim.lockdown;
+    crew?.setAlert(alertOn); sim.crewOutside = crew?.outside ?? 0;      // every astronaut hauls back to the hab
+    if (running) crew?.update(dt, camera.position);
     crewTalk?.update();
+    hab.lockdown = !!sim.lockdown; hab.alarm = sim.fire > 0 || sim.batteryHazard > 0.5;
+    const away = hab.exposed || hab.where === 'SURFACE' || hab.where === 'ROVER CABIN';
+    if (alertOn && away && running) { recallT -= dt; if (recallT <= 0) { beep('recall'); recallT = 2; } ui.banner('RETURN TO THE HAB NOW'); }
+    else if (sim.lockdown) { recallT = 0; ui.banner(`LOCKDOWN · ${sim.lockdown.reason} · HATCHES SEALED`, 'calm'); }
+    else if (sim.shelter) { recallT = 0; ui.banner(crew && !crew.allIn ? 'STORM SHELTER · CREW COMING IN' : 'STORM SHELTER · CREW SAFE', 'calm'); }
+    else { recallT = 0; ui.banner(null); }
+    if (sim.lockdown && !prevLock && locked && !comms.isOpen && !comms.padOpen) { keys.clear(); document.exitPointerLock(); ui.open(); }   // all eyes on the systems
+    prevLock = !!sim.lockdown;
     visorEl.classList.toggle('on', hab.suitOn);
   }
   if (rover && hab) {
-    const r = rover.update(dt, Math.min(dtSim, dt * 60), { player: camera.position, suitOn: hab.suitOn, keys, sim, hab: dishPos });
+    const r = rover.update(dt, Math.min(dtSim, dt * 60), { player: camera.position, suitOn: hab.suitOn, keys, sim, hab: dishPos, look: lookDir });
     yaw += r.dHeading;
     if (rover.pendingExit) { camera.position.x = rover.pendingExit.x; camera.position.z = rover.pendingExit.y; camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE; vy = 0; yaw = rover.heading + Math.PI; rover.pendingExit = null; }
   }
@@ -257,10 +279,12 @@ function frame() {
   sunLive = s.live; sd.set(s.x, s.y, s.z); earthDir.set(e.x, e.y, e.z); earthEl = e.el;
   const inRover = !!rover && rover.inside, inside = (hab ? hab.inHab(camera.position.x, camera.position.z) : false) || inRover;
   ambK += ((inside ? 0.1 : 0.35) - ambK) * Math.min(1, dt * 3); amb.intensity = ambK;
+  storm.update(dt, camera.position, sim.lockdown?.storm ?? 0, !inside);
+  hab?.setShutters(storm.level);
 
   const px0 = camera.position.x, pz0 = camera.position.z;
   if (locked && !hab?.busy && !rover?.busy && rover?.mode !== 'driving') {
-    const base = hab?.exposed ? 1.7 : 1.4, speed = keys.has('ShiftLeft') ? base * 1.9 : base;   // a person in a suit does not sprint
+    const lk = !!sim.lockdown, base = (hab?.exposed ? 1.7 : 1.4) * (lk ? 0.6 : 1), speed = keys.has('ShiftLeft') && !lk ? base * 1.9 : base;   // lockdown: walking pace only   // a person in a suit does not sprint
     fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw)); rgt.set(Math.cos(yaw), 0, -Math.sin(yaw)); mv.set(0, 0, 0);
     if (keys.has('KeyW')) mv.add(fwd); if (keys.has('KeyS')) mv.sub(fwd);
     if (keys.has('KeyD')) mv.add(rgt); if (keys.has('KeyA')) mv.sub(rgt);
@@ -272,7 +296,7 @@ function frame() {
       if (!blk(nx, camera.position.z)) camera.position.x = nx;
       if (!blk(camera.position.x, nz)) camera.position.z = nz;
     }
-    if (!inRover && keys.has('Space') && onGround && !(hab && hab.inHab(camera.position.x, camera.position.z))) { vy = 2.2; onGround = false; }
+    if (!inRover && !sim.lockdown && keys.has('Space') && onGround && !(hab && hab.inHab(camera.position.x, camera.position.z))) { vy = 2.2; onGround = false; }
   }
   if (inRover && rover) {
     rover.cameraPos(camera.position); vy = 0; onGround = true;
@@ -285,6 +309,11 @@ function frame() {
   const vel = inRover ? 0 : Math.hypot(camera.position.x - px0, camera.position.z - pz0) / Math.max(dt, 1e-4);
   bobT += vel * dt * 2.1; const bk = onGround ? Math.min(1, vel / 1.2) : 0;
   camera.rotation.set(pitch + Math.sin(bobT * 2) * 0.0045 * bk, yaw, Math.sin(bobT) * 0.0035 * bk, 'YXZ');
+  if (inRover && rover) {
+    camera.quaternion.premultiply(rover.tiltQ); // the cabin pitches and rolls with the terrain
+    const sh = rover.shake * (rover.mode === 'driving' ? 1 : 0.5), t = performance.now() / 1000;
+    if (sh > 0.001) { camera.rotateX(Math.sin(t * 41) * 0.012 * sh + Math.sin(t * 17.3) * 0.01 * sh); camera.rotateZ(Math.sin(t * 29) * 0.014 * sh); camera.position.y += Math.sin(t * 53) * 0.025 * sh; }
+  }
   lamp.visible = !!hab && hab.exposed && hab.suitOn;
   player.update(dt, camera.position, yaw, vel, onGround, !!hab?.suitOn, comms.padOpen, !!hab?.exposed);
 
@@ -296,6 +325,7 @@ function frame() {
   litT += dt; hudT += dt;
   if (litT > 0.25) { litT = 0; sim.sunlit = isSunlit(arrayPos, sd); earthVisible = earthEl > 0.003 && isSunlit(dishPos, earthDir); }
   if (hudT > 0.25) { hudT = 0; drawHud(s.az, s.el); }
+  if (sim.quakeS > 0) { const a = 0.045 * Math.min(1, sim.quakeS / 3); shakeOff.set((Math.random() - 0.5) * a, (Math.random() - 0.5) * a * 0.7, (Math.random() - 0.5) * a); camera.position.add(shakeOff); }
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }

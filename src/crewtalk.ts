@@ -169,7 +169,7 @@ export class CrewTalk {
       this.status('');
       if (res.do.type === 'emote') bot.perform(res.do, p);
       await this.speak(bot, res.say, radio);
-      bot.convo = null; if (res.do.type !== 'emote' && res.do.type !== 'none') bot.perform(res.do, p);
+      bot.convo = null; if (res.do.type !== 'emote' && res.do.type !== 'none' && !this.crew.alert) bot.perform(res.do, p);   // nobody wanders off during a shelter/lockdown alert
     } finally { this.busy = false; for (const b of this.crew.bots) if (b.convo) b.convo = null; this.status(''); }
   }
 

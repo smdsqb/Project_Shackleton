@@ -24,6 +24,16 @@ Keep 5 crew alive at Shackleton for 14 days. The sim (`src/sim.ts`) couples powe
 - Clock: one fixed rate (600x, so 14 days take about 35 minutes) that eases to 60x on its own during a decision card or an EVA. No player-controlled time warp. Keys: M tablet, P array, 1-3 decide, H ask Houston, E interact. Food production is deliberately left out of this version.
 - Training tempo: events are far more frequent than in reality. `SIM.commsAlwaysOn` keeps the Earth link up regardless of line of sight; set it to `false` for the strict rules.
 
+### Crises (17 types, about 30 per mission) and what they force you to do
+
+Every crisis stays open until the crew acts on it, and the open ones get worse. At most three are ever open at once.
+
+- **Dust storm (lockdown):** electrostatic dust (the Moon has no wind). Fog and drifting dust build outside, the Hab portholes go opaque, hatches seal from the inside, walking drops to a slow pace with no sprint or jump, and the tablet opens so eyes go to the systems. Everyone outside is called in.
+- **Meteoroid swarm (lockdown), moonquake** (camera shake, hidden damage you must inspect for), **battery thermal runaway, electrical fire, water line rupture, coolant pump failure, solar radio blackout, crew injury, array string fault, pressure sensor alarm** (real leak or bad sensor? verify first), plus dust cloud, solar storm, hull breach, scrubber, oxygenator and antenna faults.
+- **Shelter / lockdown recall:** pressing "enter storm shelter" on the tablet, choosing SHELTER NOW, or any lockdown makes every crew member (including the sleeper and whoever is on EVA) drop what they are doing and run back to the hab. The duty roster freezes until the all-clear, and anyone still outside takes the full dose. If you are outside, a repeating alarm and a flashing banner tell you to get in, and hatches never lock you out from the surface.
+- Emergencies pull the crew off their current task; you can also stop a task from the tablet (progress is lost).
+- Keys: **Tab closes the comms desk and the radio pad** (Esc is only pause).
+
 ## Real terrain (LRO LOLA)
 
 The sim loads `public/terrain/shackleton.{json,bin}` when present and falls back to procedural terrain otherwise. The tile is baked from `LDEM_875S_5M` (5 m/px, 87.5 S to the pole) by `scripts/bake-terrain.mjs`, which reads everything it needs from the product's `.LBL`, detects the raster's axis orientation from the data, picks the best-lit spot on Shackleton's rim, and rotates the tile into the simulator's frame (+x east, +z south) so the Horizons Sun and Earth directions line up with the terrain shadows.
@@ -36,12 +46,19 @@ Walk to the COMMS / OPS console in the Hab and press E. Commands: UPDATE, STATUS
 
 ## Lunar rover
 
-A six-wheel pressurised rover (modelled on the white faceted rover in the reference images) is parked on the pad. Walk to its port-side steps and press E to cycle the hatch (it also refuses to let you out without a sealed EVA suit). Inside: walk the cabin, press E at the driver's seat to drive (W/S throttle, A/D steer, Space brake, L headlamps, R radio), E at the rear rack for the rover radio, E at the door to exit.
+A six-wheel pressurised rover (modelled on the white faceted rover in the reference images) is parked on the pad. Prompts only appear for the thing you are standing at **and facing**: look at the port door to enter or exit, at the seat to drive, at the rear rack for the radio, at the lockers for repair kits.
 
-- Wheels follow the DEM individually (independent suspension, pitch and roll), dust flies in vacuum-correct arcs, the rover cannot climb slopes steeper than about 30 degrees or drive through the Hab, airlocks or props.
-- Battery (90 kWh): hotel load, lamps and traction drain it; park within about 13 m of the Hab to charge from the Hab battery. Battery shows on the HUD and the dash.
-- Radio: UHF to the Hab needs line of sight (checked against the terrain) and a live battery. In the rover terminal, `HAB <message>` talks to the Hab crew; every other command goes to Houston relayed through the Hab (needs the Hab's Earth link too). At the Hab console, `ROVER <message>` calls the rover when somebody is aboard. Replies come from the same Groq-backed `api/comms` function.
-- Rover mass, battery and speed figures are design placeholders.
+**Driving** (W/S throttle and brake, A/D steer, Space brake, X parking brake, L lamps, R radio):
+- Lunar gravity means weak traction: the rover starts slowly, stops over several metres, and understeers at speed. Hard cornering slides the wheels and wears the tyres.
+- Each wheel is on a spring and damper and follows the ground, including boulders (shared layout with the rendered rocks). Small rocks are bumps, large ones stop you, big drops launch the body and can hurt the suspension. The cabin pitches, rolls and shakes with the terrain.
+- Speed limits follow slope, side slope, boulder fields and damage; an overspeed alarm sounds and hill-descent control brakes automatically (which heats the brakes; hot brakes fade). Look-ahead warnings call out steep inclines and descents, drop-offs, side slopes, boulder fields and impassable boulders on the HUD and the dash.
+- Braking is traction-limited (ABS), uses regenerative braking when the battery has room, and the parking brake holds on slopes.
+
+**Damage and repair:** hard impacts, collisions, overspeed braking and sliding damage wheels, brakes, panels, windscreen, headlamps and the comms dish, with visible dents, windscreen cracks, a crumpled bumper, flat or out-of-round wheels, sparks, coolant venting and glowing brake rotors. A damaged dish shortens the UHF range. Below 60 % a part is flagged for repair: exit the rover, face the damaged part and press E (uses one of three repair kits; restock from the Hab spares locker inside the rover when parked within 13 m of the Hab).
+
+**Radio:** UHF to the Hab needs line of sight and a live dish. At the rover radio (or C while inside) `HAB <message>` talks to the Hab; everything else goes to Houston relayed through the Hab. At the Hab console `ROVER <message>` calls the rover. **Tab** closes any radio (Escape no longer does).
+
+Rover mass, battery and speed figures are design placeholders.
 
 ## Deployment
 
