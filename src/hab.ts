@@ -395,7 +395,9 @@ export class Hab {
         d.lamp.color.setHex(d.open || d.vis ? 0xffb000 : 0x4fd8ff);
       }
       if (l.cyc !== null) {
-        const s = (LOCK_P / (this.lockdown ? CYCLE_S * 0.5 : CYCLE_S)) * dt; // emergency cycle: twice as fast when the hab is locked down l.p = l.cyc > l.p ? Math.min(l.cyc, l.p + s) : Math.max(l.cyc, l.p - s);
+        // emergency cycle: twice as fast when the hab is locked down
+        const s = (LOCK_P / (this.lockdown ? CYCLE_S * 0.5 : CYCLE_S)) * dt;
+        l.p = l.cyc > l.p ? Math.min(l.cyc, l.p + s) : Math.max(l.cyc, l.p - s);
         if (l.p === l.cyc) { if (l.cyc === 0) sim.spend(0.12, 0.6); else sim.spend(0.25, 0.4); l.cyc = null; this.toast = `${l.name} ${l.p === 0 ? 'DEPRESSURISED' : 'PRESSURISED'}`; this.toastT = 2.8; }
       }
     }
