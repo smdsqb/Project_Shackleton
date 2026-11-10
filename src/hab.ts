@@ -68,7 +68,7 @@ function aoBlob(w: number, d: number) {
 
 export class Hab {
   prompt = ''; toast = ''; suitHours = EVA_H; exposed = false; where = 'HAB';
-  lockdown = false; alarm = false; private paneM!: THREE.MeshPhysicalMaterial; private shutterK = 0;
+  lockdown = false; alarm = false; lockHeld: boolean[] = [false, false]; private paneM!: THREE.MeshPhysicalMaterial; private shutterK = 0;
   curtains: THREE.Group[] = []; bags: THREE.Object3D[] = [];
   suitState: 'rack' | 'donning' | 'on' | 'doffing' = 'rack';
   taskLabel = ''; taskProgress = 0; onComms: (() => void) | null = null;
@@ -277,7 +277,7 @@ export class Hab {
     for (const l of this.locks) {
       const hatch = (door: Door, u: number, nm: string, ok: () => string): Item => {
         const [x, z] = w(l, u, 0);
-        return { x, z, reach: 1.6, text: () => `[E] ${door.open ? 'CLOSE' : 'OPEN'} ${nm} HATCH`, run: () => { if (door.open) { door.open = false; return `${nm} HATCH SEALED`; } const e = ok(); if (e) return e; door.open = true; return `${nm} HATCH OPEN`; } };
+        return { x, z, reach: 1.6, text: () => `[E] ${door.open ? 'CLOSE' : 'OPEN'} ${nm} HATCH`, run: () => { if (door.open) { door.open = false; return `${nm} HATCH SEALED`; } if (this.lockHeld[this.locks.indexOf(l)]) return 'AIRLOCK IN USE BY CREW'; const e = ok(); if (e) return e; door.open = true; return `${nm} HATCH OPEN`; } };
       };
       this.items.push(
         hatch(l.inner, HAB_R, 'INNER', () => (l.outer.open ? 'CLOSE OUTER HATCH FIRST' : l.cyc !== null ? 'AIRLOCK IS CYCLING' : l.p < 99 ? 'PRESSURISE THE AIRLOCK FIRST' : '')),
@@ -286,6 +286,7 @@ export class Hab {
           text: () => (l.cyc !== null ? `${l.name} CYCLING  ${l.p.toFixed(0)} kPa` : `[E] ${l.p > 50 ? 'DEPRESSURISE' : 'REPRESSURISE'} ${l.name}`),
           run: () => {
             if (l.cyc !== null) return 'CYCLE IN PROGRESS';
+            if (this.lockHeld[this.locks.indexOf(l)]) return 'AIRLOCK IN USE BY CREW';
             if (l.inner.open || l.outer.open) return 'CLOSE BOTH HATCHES BEFORE CYCLING';
             if (this.lockdown && l.p > 50) return 'LOCKDOWN: AIRLOCK WILL NOT CYCLE OUT';
             if (l.p > 50 && !this.suitOn) return 'REFUSED: EVA SUIT NOT SEALED';
@@ -362,6 +363,11 @@ export class Hab {
   }
   inHab(x: number, z: number) { return Math.hypot(x, z) < HAB_R - 0.2; }
   /** Visual-only door swing for the crew: it never touches the real hatch state, so the airlock interlock and the player's collision stay honest. */
+  /** open, or still swinging: counts both the crew's visual swing and a hatch the player left open */
+  doorOpen(lock: number, which: 'inner' | 'outer') { const d = this.locks[lock]?.[which]; return !!d && (d.open || !!d.vis || d.k > 0.08); }
+  /** the crew seal a hatch the player left open */
+  closeReal(lock: number, which: 'inner' | 'outer') { const d = this.locks[lock]?.[which]; if (!d || !d.open) return; d.open = false; d.vis = false; this.toast = 'CREW SEALED THE HATCH YOU LEFT OPEN'; this.toastT = 2.8; }
+  playerIn(lock: number) { return this.where === this.locks[lock]?.name; }
   setDoor(lock: number, which: 'inner' | 'outer', open: boolean) { const l = this.locks[lock]; if (l) l[which].vis = open; }
   /** Vehicle-sized obstacle test: the drum and both airlock tunnels. */
   solid(x: number, z: number, r: number): boolean {

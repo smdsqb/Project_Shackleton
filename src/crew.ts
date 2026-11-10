@@ -12,7 +12,14 @@ import { propCircles } from './exterior';
 
 type Pose = Record<string, number>;
 type Slot = 'sleep' | 'window' | 'comms' | 'eva';
-export type CrewHab = { curtains: THREE.Group[]; bags: THREE.Object3D[]; setDoor(lock: number, which: 'inner' | 'outer', open: boolean): void };
+export type CrewHab = {
+  curtains: THREE.Group[]; bags: THREE.Object3D[]; setDoor(lock: number, which: 'inner' | 'outer', open: boolean): void;
+  /** true while that hatch is open or still swinging, counting both the crew's visual swing and a hatch the player left open */
+  doorOpen?(lock: number, which: 'inner' | 'outer'): boolean;
+  /** the crew seal a hatch the player left open (real state) */
+  closeReal?(lock: number, which: 'inner' | 'outer'): void;
+  playerIn?(lock: number): boolean; lockHeld?: boolean[];
+};
 
 const { sin, cos, abs, min, max, PI, atan2, hypot, sqrt } = Math;
 const TAU = PI * 2, TL = 2.2;
@@ -350,7 +357,7 @@ const NEXT: Record<Slot, Slot> = { sleep: 'window', window: 'comms', comms: 'eva
 export class Bot {
   rig: Rig; x = 0; z = 0; yaw = 0; v = 0; phase = Math.random() * TAU; t = Math.random() * 50; ph0 = Math.random() * 10;
   eva = false; slot: Slot = 'window'; task: TaskDef | null = null; taskLeft = 0; stops: Stop[] = []; si = 0; dwell = 0; doing = false;
-  nodes: Node[] = []; waitLeft = 0; hurry = false; sleepStage = 0; bay = 0; pending: Slot | null = null; hold = 0; waitFor: Bot | null = null;
+  nodes: Node[] = []; waitLeft = 0; hurry = false; lk: number | null = null; ilk = 0; curNode: Node | null = null; bestD = 1e9; stuckT = 0; free = false; sleepStage = 0; bay = 0; pending: Slot | null = null; hold = 0; waitFor: Bot | null = null;
   cur: Pose = { ...BASE }; py = 0.9; roll = 0; rollT = rnd(40, 90); blink = 0; blinkT = rnd(1, 4); sacT = 0; sac: [number, number] = [0, 0];
   gaze: [number, number] = [0, 0]; glance = 0; glanceT = rnd(6, 16); talk = 0; cruise: number;
   convo: 'listen' | 'think' | 'speak' | null = null; lip = 0; emote: { name: string; t: number; dur: number } | null = null;
@@ -364,13 +371,19 @@ export class Bot {
   recall(i: number) {
     if (this.pending) this.slot = this.pending; // a shift change in progress is committed, not dropped, so the roster stays complete
     this.pending = null; this.waitFor = null; this.hold = 0; this.waitLeft = 0; this.hurry = true;
-    this.ov = 0; this.follow = false; this.deferStop = -1; this.emote = null;
-    const s = shelterSpot(i); this.task = { id: 'shelter', slot: this.slot, w: 0, dur: [1e9, 1e9], stops: () => [s] }; this.taskLeft = 1e9; this.stops = [s]; this.goStop(0);
+    this.ov = 0; this.follow = false; this.deferStop = -1; this.emote = null;   // an order from the Commander is cancelled by the alert
+    const s = shelterSpot(i); this.task = { id: 'shelter', slot: this.slot, w: 0, dur: [1e9, 1e9], stops: () => [s] }; this.taskLeft = 1e9; this.stops = [s]; this.si = 0; this.doing = false; this.dwell = s.dwell; this.free = false;
+    const r = hypot(this.x, this.z), k = this.lk;
+    if (k !== null && r > HAB_R - 0.5 && r < HAB_R + TL + 0.3) {   // caught inside an airlock: go back the way you came, never through a closed hatch
+      const a = k * PI, P = (u: number, ev?: string, wait?: number): Node => ({ ...pol(u, a), ev, wait, lk: k, lane: true }), iN = HAB_R - 1.4, iM = HAB_R + 0.9;
+      this.nodes = [...(this.eva ? [P(iM, 'ind', 2)] : []), P(iM, 'c:o', 0.6), P(iM, 'o:i', 1.0), P(iN, 'c:i!', 0.3), { x: s.x, z: s.z }];
+    } else { this.dropLock(); this.nodes = this.route(s); }
   }
   /** All clear: back to the duty roster. */
   release() { this.hurry = false; this.task = null; this.assign(this.slot, false); }
 
   assign(slot: Slot, immediate: boolean, bay?: number) {
+    if (!this.inLock()) this.dropLock();   // a half-cycled airlock is finished first (goStop defers), so keep holding it until then
     this.slot = slot; if (bay !== undefined) this.bay = bay;
     this.ov = 0; this.follow = false;
     this.pickTask(); if (immediate) this.teleport(); else this.goStop(0);
@@ -392,8 +405,13 @@ export class Bot {
   private lock(k: number, out: boolean): Node[] {
     const a = k * PI, P = (u: number, ev?: string, wait?: number): Node => ({ ...pol(u, a), ev: ev ? `${ev}` : undefined, wait, lk: k, lane: true });
     const iN = HAB_R - 1.4, iM = HAB_R + 0.9, oM = HAB_R + TL - 0.9, oX = HAB_R + TL + 1.9;
-    return out ? [P(iN, 'o:i', 1.1), P(iM, 'c:i', 1.0), P(iM, 'eva', 9), P(iM, 'o:o', 1.1), P(oX, 'c:o', 0.4)]
-      : [P(oX, 'o:o', 1.1), P(oM, 'c:o', 1.0), P(oM, 'ind', 8), P(oM, 'o:i', 1.1), P(iN, 'c:i', 0.4)];
+    return out ? [P(iN - 1.2, 'acq'), P(iN, 'o:i', 1.1), P(iM, 'c:i', 1.0), P(iM, 'eva', 9), P(iM, 'o:o', 1.1), P(oX, 'c:o!', 0.4)]
+      : [P(oX + 1.4, 'acq'), P(oX, 'o:o', 1.1), P(oM, 'c:o', 1.0), P(oM, 'ind', 8), P(oM, 'o:i', 1.1), P(iN, 'c:i!', 0.4)];
+  }
+  /** release the airlock this bot holds and shut both of its hatches, so nothing is ever left hanging open */
+  private dropLock() {
+    if (this.lk === null) return; const k = this.lk; this.lk = null; this.ilk = 0;
+    if (this.crew.held[k] === this) { this.crew.held[k] = null; this.crew.hab.setDoor(k, 'inner', false); this.crew.hab.setDoor(k, 'outer', false); }
   }
   private route(s: Stop): Node[] {
     const n: Node[] = [];
@@ -401,15 +419,22 @@ export class Bot {
       const th = BAYS[this.bay]; n.push({ ...pol(6.3, th), lane: true, speed: 0.4, ev: 'sit-up', wait: 3.5 }, { ...pol(5.65, th), lane: true, speed: 0.7, ev: 'stand' });
     }
     if (!this.eva && s.eva) n.push(...this.lock(0, true));
-    else if (this.eva && !s.eva) n.push(...this.lock(1, false));
+    else if (this.eva && !s.eva) n.push(...this.lock(this.x >= 0 ? 0 : 1, false));   // come back through the nearer airlock (the mutex keeps them from colliding), never across the hab
     if (s.anim === 'sleep') { const th = BAYS[s.bay ?? 0]; n.push({ ...pol(5.15, th) }, { ...pol(5.72, th), ev: 'sit' }, { ...pol(6.3, th), lane: true, speed: 0.6, ev: 'lie', wait: 3.5 }, { ...pol(6.52, th), lane: true, speed: 0.25, ev: 'asleep' }); }
     else n.push({ x: s.x, z: s.z });
     return n;
   }
   private arrive(n: Node) {
+    const k = n.lk ?? 0, hab = this.crew.hab;
+    // interlock + mutex: wait here (re-queue this node) until it is safe. Never open a hatch while its partner is open; one crew member per airlock.
+    const wait = (why?: 'inner' | 'outer') => { this.ilk += 0.4; if (why && this.ilk > 4) { hab.closeReal?.(k, why); this.ilk = 0; } this.nodes.unshift({ ...n, wait: undefined }); this.waitLeft = 0.4; };
+    if (n.ev === 'acq') { const h = this.crew.held[k]; if ((h && h !== this) || hab.playerIn?.(k)) return wait(); this.crew.held[k] = this; this.lk = k; this.ilk = 0; return; }
+    if (n.ev === 'o:i' && hab.doorOpen?.(k, 'outer')) return wait('outer');
+    if (n.ev === 'o:o' && hab.doorOpen?.(k, 'inner')) return wait('inner');
     switch (n.ev) {
-      case 'o:i': this.crew.hab.setDoor(n.lk ?? 0, 'inner', true); break; case 'c:i': this.crew.hab.setDoor(n.lk ?? 0, 'inner', false); break;
-      case 'o:o': this.crew.hab.setDoor(n.lk ?? 0, 'outer', true); break; case 'c:o': this.crew.hab.setDoor(n.lk ?? 0, 'outer', false); break;
+      case 'o:i': hab.setDoor(k, 'inner', true); break; case 'c:i': hab.setDoor(k, 'inner', false); break;
+      case 'o:o': hab.setDoor(k, 'outer', true); break; case 'c:o': hab.setDoor(k, 'outer', false); break;
+      case 'c:i!': hab.setDoor(k, 'inner', false); this.dropLock(); break; case 'c:o!': hab.setDoor(k, 'outer', false); this.dropLock(); break;
       case 'eva': this.setEva(true); break; case 'ind': this.setEva(false); break;
       case 'sit': this.sleepStage = 1; break; case 'lie': this.sleepStage = 2; break; case 'asleep': this.sleepStage = 3; this.rollT = rnd(40, 90); break;
       case 'sit-up': this.sleepStage = 1; break; case 'stand': this.sleepStage = 0; break;
@@ -494,10 +519,12 @@ export class Bot {
     else if (this.waitLeft > 0) { this.waitLeft -= dt; this.v *= 0.8; }
     else if (this.nodes.length) {
       const n = this.nodes[0]; let dx = n.x - this.x, dz = n.z - this.z; const d = hypot(dx, dz);
-      if (d < 0.18) { this.nodes.shift(); this.arrive(n); if (!this.nodes.length) { this.doing = true; this.v = 0; } }
+      if (this.curNode !== n) { this.curNode = n; this.bestD = d; this.stuckT = 0; this.free = false; }
+      else if (d < this.bestD - 0.04) { this.bestD = d; this.stuckT = 0; } else if ((this.stuckT += dt) > 2.5) this.free = true;   // pinned against something: ignore obstacles until this node is reached
+      if (d < 0.18) { this.nodes.shift(); this.arrive(n); if (!this.nodes.length) { this.doing = true; this.v = 0; this.dropLock(); } }
       else {
         dx /= d; dz /= d;
-        if (!n.lane) for (const c of this.circles()) {
+        if (!n.lane && !this.free) for (const c of this.circles()) {
           const ox = this.x - c.x, oz = this.z - c.z, od = hypot(ox, oz), R = c.r + 0.45;
           if (od < R + 1.2 && od > 0.01) { const w = clamp((R + 1.2 - od) / 1.2, 0, 1) * (od < R ? 2.5 : 1.4), tx = -oz / od, tz = ox / od, side = dx * tx + dz * tz >= 0 ? 1 : -1; dx += ((ox / od) * 0.9 + tx * side * 1.3) * w; dz += ((oz / od) * 0.9 + tz * side * 1.3) * w; }
         }
@@ -507,7 +534,8 @@ export class Bot {
         this.v += (tv * max(0, cos(da)) - this.v) * min(1, dt * 3);
         this.x += sin(this.yaw) * this.v * dt; this.z += cos(this.yaw) * this.v * dt; moving = this.v > 0.12;
         for (const c of this.circles()) { // hard stop: steering is soft, so never let anyone stand inside an obstacle (only the airlock lane may cross the hab ring)
-          if (n.lane && c.x === 0 && c.z === 0 && c.r > HAB_R) continue;
+          if (this.free) continue;
+          if (n.lane && ((c.x === 0 && c.z === 0 && c.r > HAB_R) || hypot(n.x - c.x, n.z - c.z) < c.r + 0.35)) continue;   // airlock approach may sit inside a parked rover's keep-out circle
           const ox = this.x - c.x, oz = this.z - c.z, od = hypot(ox, oz), R = c.r + 0.35;
           if (od < R && od > 0.001) { this.x = c.x + (ox / od) * R; this.z = c.z + (oz / od) * R; }
         }
@@ -606,7 +634,7 @@ export class Bot {
 
 // ---------------------------------------------------------------- crew manager
 export class Crew {
-  bots: Bot[] = []; alert = false; private next = rnd(CREW_CFG.rotateMin, CREW_CFG.rotateMax); private open = [0, 0, 0];
+  bots: Bot[] = []; alert = false; held: (Bot | null)[] = [null, null]; private next = rnd(CREW_CFG.rotateMin, CREW_CFG.rotateMax); private open = [0, 0, 0];
   constructor(scene: THREE.Scene, readonly ground: (x: number, z: number) => number, readonly hab: CrewHab) {
     for (const s of ROSTER) { const b = new Bot(s, this); this.bots.push(b); scene.add(b.rig.root); }
     const slots: Slot[] = ['sleep', 'window', 'comms', 'eva'];
@@ -615,7 +643,7 @@ export class Crew {
   /** Shelter / lockdown order. On: every crew member hauls back to the hab and the duty roster freezes. Off: everyone resumes. */
   setAlert(on: boolean) {
     if (on === this.alert) return; this.alert = on;
-    if (on) { for (const k of [0, 1]) { this.hab.setDoor(k, 'inner', false); this.hab.setDoor(k, 'outer', false); } this.bots.forEach((b, i) => b.recall(i)); }
+    if (on) { for (const k of [0, 1]) if (!this.held[k]) { this.hab.setDoor(k, 'inner', false); this.hab.setDoor(k, 'outer', false); } this.bots.forEach((b, i) => b.recall(i)); }
     else { this.bots.forEach((b) => b.release()); this.next = rnd(CREW_CFG.rotateMin, CREW_CFG.rotateMax); }
   }
   /** crew members currently outside the pressure hull */
@@ -647,6 +675,7 @@ export class Crew {
     if (!this.alert) this.next -= dt;
     if (!this.alert && this.next <= 0 && this.bots.every((b) => !b.pending)) { this.rotate(); this.next = rnd(CREW_CFG.rotateMin, CREW_CFG.rotateMax); }
     for (const b of this.bots) b.update(dt, cam);
+    this.hab.lockHeld = this.held.map(Boolean);
     this.hab.curtains.forEach((g, i) => { // bunk curtain draws back while someone is in the bay
       const occ = this.bots.some((b) => b.sleepStage > 0 && b.bay === i) ? 1 : 0; this.open[i] += (occ - this.open[i]) * min(1, dt * 1.5);
       const m = g.children[0]; if (m) { m.scale.z = lerp(1, 0.3, this.open[i]); m.position.z = lerp(0, 0.7, this.open[i]); } if (g.children[1]) g.children[1].visible = this.open[i] < 0.5;
