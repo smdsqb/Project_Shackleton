@@ -71,3 +71,26 @@ with PLSS, gold visor and stripes outside) and runs a duty scheduler:
 - task pools per role: stargaze / photo / journal / coffee / stretch; software update / radio check / rack check / lab; moonwalk / sample collection / panel dusting / equipment inspection
 - airlock transits (outbound lock 1, inbound lock 2) with suit-up swap; natural gait, lunar lope on EVA, blinking, saccades, breathing, glances at the player
 - bots do not interact with each other or the player yet; each task owns its own spot
+
+## Talking to the crew (branch `crew-voice`)
+
+Press **V** to open the mic (it closes when you stop talking; press V again to send, Esc to cancel) or **T** to type. The nearest awake
+crew member - or whoever you name ("Rafa, come over here") - turns to face you, answers in their own voice, then does what you asked or
+goes back to their task. Replies always appear as captions; voice replies can be turned off in the text panel. When you start playing,
+the nearest crew member greets you with a one-liner that fits your local time of day, and crew nod, wave or salute as you walk past.
+
+```
+mic  ->  /api/stt   Groq Whisper (whisper-large-v3-turbo), ElevenLabs Scribe as backup
+     ->  /api/crew  Groq writes one informal in-character line + picks an action the bot can really do
+     ->  /api/tts   ElevenLabs, a distinct voice per person (flash model for low latency), other providers as fallback
+     ->  played from the speaker's position in 3D, mouth driven by the audio
+```
+
+Orders the crew understand: come here, follow me, wait/stop, go to (window, console, galley, lab, racks, bunk, airlock, centre, outside),
+do a task (stargaze, photo, journal, coffee, stretch, update, radio, rack, lab, moonwalk, sample, dust, inspect), and emotes (wave, salute,
+thumbs-up, shrug, jump, dance, facepalm, nod). Orders lapse after a while and the person drifts back to their duty; airlock cycles are never
+interrupted. Talking to someone on EVA (or from outside to someone inside) goes over a filtered suit radio.
+
+Env vars (all optional, existing ones are reused): `GROQ_API_KEY`, `GROQ_CREW_MODEL`, `GROQ_STT_MODEL`, `STT_ORDER` (default `groq,elevenlabs`),
+`STT_LANG` (default `en`), `ELEVENLABS_API_KEY`, `ELEVENLABS_FAST_MODEL`, `ELEVENLABS_VOICE_OKAFOR|WHITAKER|ZHAO|MENDOZA` (override voice ids).
+No keys? The crew still reply from a built-in fallback and the browser's own speech synthesis; typing always works.

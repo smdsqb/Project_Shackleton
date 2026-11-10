@@ -4,6 +4,8 @@
 //   RUNWAYML_API_SECRET (RUNWAY_VOICE_MALE / _FEMALE preset names, RUNWAY_TTS_MODEL)
 //   OPENAI_API_KEY      (OPENAI_VOICE_MALE / _FEMALE, OPENAI_TTS_MODEL)
 //   GROQ_API_KEY        (GROQ_TTS_MALE / _FEMALE, GROQ_TTS_MODEL)
+// Crew members have their own ElevenLabs voices (ELEVENLABS_VOICE_OKAFOR / _WHITAKER / _ZHAO / _MENDOZA override these ids).
+const PERSON_VOICE: Record<string, string> = { okafor: 'XrExE9yKIg1WjnnlVkGX', whitaker: 'iP95p4xoKVk53GoZ742B', zhao: 'FGY2WhTYpPnrIDTdsKH5', mendoza: 'bIHbv24MWmeRgasZH58o' };
 type Voice = 'female' | 'male'; type Style = 'normal' | 'emergency'; type Clip = { buf: ArrayBuffer; type: string };
 const E = process.env;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -11,13 +13,17 @@ const hits = new Map<string, number[]>();
 const throttled = (ip: string) => { const now = Date.now(), a = (hits.get(ip) ?? []).filter((t) => now - t < 60000); a.push(now); hits.set(ip, a); return a.length > 60; };
 class Skip extends Error {}
 
-async function elevenlabs(text: string, voice: Voice, style: Style): Promise<Clip> {
+async function elevenlabs(text: string, voice: Voice, style: Style, person = '', fast = false): Promise<Clip> {
   const key = E.ELEVENLABS_API_KEY; if (!key) throw new Skip('no key');
-  const id = voice === 'female' ? E.ELEVENLABS_VOICE_FEMALE ?? 'EXAVITQu4vr4xnSDxMaL' : E.ELEVENLABS_VOICE_MALE ?? 'nPczCjzI2devNBz1zQrb';
-  const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${id}?output_format=mp3_44100_128`, {
+  const dflt = voice === 'female' ? E.ELEVENLABS_VOICE_FEMALE ?? 'EXAVITQu4vr4xnSDxMaL' : E.ELEVENLABS_VOICE_MALE ?? 'nPczCjzI2devNBz1zQrb';
+  const own = person ? E[`ELEVENLABS_VOICE_${person.toUpperCase()}`] ?? PERSON_VOICE[person] : undefined;
+  const model = fast ? E.ELEVENLABS_FAST_MODEL ?? 'eleven_flash_v2_5' : E.ELEVENLABS_MODEL ?? 'eleven_multilingual_v2';
+  const call = (id: string) => fetch(`https://api.elevenlabs.io/v1/text-to-speech/${id}?output_format=mp3_44100_128`, {
     method: 'POST', signal: AbortSignal.timeout(9000), headers: { 'xi-api-key': key, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
-    body: JSON.stringify({ text, model_id: E.ELEVENLABS_MODEL ?? 'eleven_multilingual_v2', voice_settings: { stability: style === 'emergency' ? 0.6 : 0.42, similarity_boost: 0.75, style: style === 'emergency' ? 0.05 : 0.2, use_speaker_boost: true } }),
+    body: JSON.stringify({ text, model_id: model, voice_settings: { stability: style === 'emergency' ? 0.6 : 0.42, similarity_boost: 0.75, style: style === 'emergency' ? 0.05 : 0.2, use_speaker_boost: true } }),
   });
+  let r = await call(own ?? dflt);
+  if (!r.ok && own && [400, 404, 422].includes(r.status)) r = await call(dflt);   // custom voice id not available on this account
   if (!r.ok) throw new Error(`HTTP ${r.status} ${(await r.text()).slice(0, 140)}`);
   return { buf: await r.arrayBuffer(), type: 'audio/mpeg' };
 }
@@ -66,16 +72,17 @@ async function groq(text: string, voice: Voice): Promise<Clip> {
 export async function POST(request: Request) {
   const ip = (request.headers.get('x-forwarded-for') ?? 'local').split(',')[0].trim();
   if (throttled(ip)) return Response.json({ error: 'rate limited' }, { status: 429 });
-  let body: { text?: string; voice?: string; style?: string };
+  let body: { text?: string; voice?: string; style?: string; person?: string; fast?: boolean };
   try { body = await request.json(); } catch { return Response.json({ error: 'bad request' }, { status: 400 }); }
   const text = String(body.text ?? '').replace(/[<>\u0000-\u001f]/g, ' ').trim().slice(0, 400);
   if (!text) return Response.json({ error: 'no text' }, { status: 400 });
+  const person = /^(okafor|whitaker|zhao|mendoza)$/.test(String(body.person ?? '')) ? String(body.person) : '', fast = body.fast === true;
   const voice: Voice = body.voice === 'female' ? 'female' : 'male', style: Style = body.style === 'emergency' ? 'emergency' : 'normal';
   const order = (E.TTS_ORDER ?? 'elevenlabs,runway,openai,groq').split(',').map((s) => s.trim().toLowerCase());
   const tried: string[] = [];
   for (const p of order) {
     try {
-      const clip = p === 'elevenlabs' ? await elevenlabs(text, voice, style) : p === 'runway' ? await runway(text, voice) : p === 'openai' ? await openai(text, voice, style) : p === 'groq' ? await groq(text, voice) : null;
+      const clip = p === 'elevenlabs' ? await elevenlabs(text, voice, style, person, fast) : p === 'runway' ? await runway(text, voice) : p === 'openai' ? await openai(text, voice, style) : p === 'groq' ? await groq(text, voice) : null;
       if (clip) return new Response(clip.buf, { headers: { 'Content-Type': clip.type, 'Cache-Control': 'no-store', 'x-tts-provider': p } });
     } catch (e) { if (!(e instanceof Skip)) tried.push(`${p}: ${String(e instanceof Error ? e.message : e).slice(0, 180)}`); }
   }
