@@ -283,6 +283,7 @@ function frame() {
   hab?.setShutters(storm.level);
 
   const px0 = camera.position.x, pz0 = camera.position.z;
+  { const pu = crew?.takePush(); if (pu && (pu.x || pu.z) && !(hab && hab.blocked(camera.position.x + pu.x, camera.position.z + pu.z)) && !propBlocked(camera.position.x + pu.x, camera.position.z + pu.z)) { camera.position.x += pu.x; camera.position.z += pu.z; } }
   if (locked && !hab?.busy && !rover?.busy && rover?.mode !== 'driving') {
     const lk = !!sim.lockdown, base = (hab?.exposed ? 1.7 : 1.4) * (lk ? 0.6 : 1), speed = keys.has('ShiftLeft') && !lk ? base * 1.9 : base;   // lockdown: walking pace only   // a person in a suit does not sprint
     fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw)); rgt.set(Math.cos(yaw), 0, -Math.sin(yaw)); mv.set(0, 0, 0);

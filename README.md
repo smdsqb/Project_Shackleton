@@ -112,3 +112,11 @@ interrupted. Talking to someone on EVA (or from outside to someone inside) goes 
 Env vars (all optional, existing ones are reused): `GROQ_API_KEY`, `GROQ_CREW_MODEL`, `GROQ_STT_MODEL`, `STT_ORDER` (default `groq,elevenlabs`),
 `STT_LANG` (default `en`), `ELEVENLABS_API_KEY`, `ELEVENLABS_FAST_MODEL`, `ELEVENLABS_VOICE_OKAFOR|WHITAKER|ZHAO|MENDOZA` (override voice ids).
 No keys? The crew still reply from a built-in fallback and the browser's own speech synthesis; typing always works.
+
+### Crew voice update: everyone, orders, bumps, mic fix
+
+- **Mic:** `vercel.json` used to send `Permissions-Policy: microphone=()`, which blocks the mic for the whole page no matter what the browser permission says. It is now `microphone=(self)` (redeploy to pick it up). If the mic still fails, the status line now says why (blocked by header, permission denied, no device, device busy, needs https).
+- **"Everyone / guys / team / all hands / listen up":** the whole crew, sleepers included, hears you. `/api/crew` with `who: "ALL"` returns one short, different line plus an action per person; they obey at once and answer one after another, nearest first.
+- **Direct orders are immediate:** the named (or nearest) person acknowledges *and moves in the same instant*, talking as they go. The prompt forbids refusals and a plain-language intent parser backs up the model so an order is never dropped. Orders beat a shift change; only a shelter alert outranks them, and an airlock cycle already in progress is finished at a run.
+- **Bump physics:** you and each crew member are soft discs. Walking into someone shoves both of you, they stumble, look round and say something (Groq, with canned fallbacks). Standing next to someone is not a bump; sleepers and people in the other environment are never bumped.
+- **Polo fix:** sleeves were narrower than the shoulder under them, so skin poked through. Sleeves are now wider, hemmed, and the polo/trouser seam no longer z-fights.
