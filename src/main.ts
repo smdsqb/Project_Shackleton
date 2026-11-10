@@ -1,5 +1,6 @@
 import { inject } from '@vercel/analytics';
 import { Crew, setCrewObstacles } from './crew';
+import { CrewTalk } from './crewtalk';
 import * as THREE from 'three';
 import { heightAt, isSunlit, rand, loadTerrain, getSite } from './terrain';
 import { buildExterior, propBlocked, propHit } from './exterior';
@@ -98,6 +99,7 @@ function buildWorld() {
   const gy = heightAt(0, 0);
   hab = new Hab(scene, gy);
   crew = new Crew(scene, heightAt, hab);
+  crewTalk = new CrewTalk(crew, camera);
   hab.onComms = () => openComms('hab');
   dishPos.set(0, gy + WALL_H + CAP_H + 0.9, 0);
   arrayPos.set(14, heightAt(14, 6) + 12, 6);
@@ -118,6 +120,7 @@ const storm = new Storm(scene);
 const shakeOff = new THREE.Vector3(); let prevQuake = 0, prevLock = false, recallT = 0;
 let hab: Hab | null = null;
 let crew: Crew | null = null;
+let crewTalk: CrewTalk | null = null;
 let rover: Rover | null = null;
 let started = false;
 const player = new Player(scene, camera);
@@ -160,7 +163,7 @@ const comms = new Comms({
 let yaw = -Math.PI / 2, pitch = 0, vy = 0, onGround = true, locked = false;
 const keys = new Set<string>();
 const intro = document.getElementById('intro')!, enter = document.getElementById('enter') as HTMLButtonElement;
-enter.addEventListener('click', () => { started = true; ensureAudio(); renderer.domElement.requestPointerLock(); intro.classList.add('leaving'); });
+enter.addEventListener('click', () => { started = true; ensureAudio(); window.setTimeout(() => void crewTalk?.greet(), 3500); renderer.domElement.requestPointerLock(); intro.classList.add('leaving'); });
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
   if (!locked && comms.padOpen) comms.closePad();
@@ -178,7 +181,10 @@ addEventListener('keydown', (e) => {
   if (dir.active && e.code === 'KeyH') { ui.ask(); return; }
   if (ui.isTabletOpen) { if (e.code === 'KeyM' || e.code === 'Escape') ui.close(); return; }
   keys.add(e.code);
+  if (e.code === 'Escape' && crewTalk?.recording) crewTalk.cancel();
   if (!locked) return;
+  if (e.code === 'KeyV' && !e.repeat) { void crewTalk?.toggleMic(); return; }
+  if (e.code === 'KeyT' && !e.repeat) { e.preventDefault(); crewTalk?.openText(); return; }
   if (e.code === 'KeyE') { if (rover?.hasPrompt) rover.press(); else hab?.press(); }
   else if (e.code === 'KeyL' && rover?.inside) rover.toggleLights();
   else if (e.code === 'KeyX' && rover?.mode === 'driving') rover.toggleParkBrake();
@@ -246,6 +252,7 @@ function frame() {
     const alertOn = sim.shelter || !!sim.lockdown;
     crew?.setAlert(alertOn); sim.crewOutside = crew?.outside ?? 0;      // every astronaut hauls back to the hab
     if (running) crew?.update(dt, camera.position);
+    crewTalk?.update();
     hab.lockdown = !!sim.lockdown; hab.alarm = sim.fire > 0 || sim.batteryHazard > 0.5;
     const away = hab.exposed || hab.where === 'SURFACE' || hab.where === 'ROVER CABIN';
     if (alertOn && away && running) { recallT -= dt; if (recallT <= 0) { beep('recall'); recallT = 2; } ui.banner('RETURN TO THE HAB NOW'); }
