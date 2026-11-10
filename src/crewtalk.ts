@@ -5,6 +5,7 @@
 //   -> /api/tts (ElevenLabs, a distinct voice per person) -> played from the speaker's position in 3D, mouth driven by the audio.
 // Every reply is also shown as a caption, and voice replies can be switched off in the text panel.
 import * as THREE from 'three';
+import { isBroadcast } from './crew';
 import type { Crew, Bot, CrewAction } from './crew';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -23,31 +24,60 @@ const CSS = `#chint{position:fixed;bottom:12px;right:16px;font-size:10px;letter-
 #cbox form{display:flex;gap:8px;padding:9px 12px;align-items:center}#cbox form span{color:#4fd8ff}#cbox input[type=text]{flex:1;background:transparent;border:0;outline:0;color:#e9edf1;font:inherit;font-size:13px}
 #cbox button{background:transparent;border:1px solid rgba(79,216,255,.45);color:#4fd8ff;font:inherit;font-size:11px;padding:3px 9px;cursor:pointer;border-radius:3px}#cbox .tip{padding:0 12px 8px;font-size:10px;letter-spacing:.1em;color:#566}`;
 
-const localReply = (text: string, bot: Bot): Reply => {
-  const t = text.toLowerCase(), f = bot.spec.first, o = (say: string, d: CrewAction): Reply => ({ say, do: d });
-  if (/\b(come|over here|get over|come here)\b/.test(t)) return o('On my way, Commander.', { type: 'come' });
-  if (/\bfollow\b/.test(t)) return o('Right behind you.', { type: 'follow' });
-  if (/\b(stop|wait|stay|hold on|hold up)\b/.test(t)) return o('Holding right here.', { type: 'stop' });
-  if (/\bdance\b/.test(t)) return o('Oh, you asked for it.', { type: 'emote', emote: 'dance' });
-  if (/\bjump\b/.test(t)) return o('Lunar gravity, baby!', { type: 'emote', emote: 'jump' });
-  if (/\bsalute\b/.test(t)) return o('Yes, sir. Commander, sir.', { type: 'emote', emote: 'salute' });
-  if (/\b(thumbs|good job|nice)\b/.test(t)) return o('Thanks, Commander.', { type: 'emote', emote: 'thumbsup' });
-  if (/\b(window|porthole|stars?)\b/.test(t)) return o('Sure, a bit of sky never hurt.', { type: 'goto', place: 'window' });
-  if (/\b(console|comms|radio)\b/.test(t)) return o('Heading to the console.', { type: 'goto', place: 'console' });
-  if (/\b(galley|kitchen|coffee|snack|eat)\b/.test(t)) return o('Coffee. Yes. Going.', { type: 'goto', place: 'galley' });
-  if (/\blab\b/.test(t)) return o('To the lab, then.', { type: 'goto', place: 'lab' });
-  if (/\b(outside|moonwalk|eva|surface)\b/.test(t)) return o('Suiting up, give me a minute.', { type: 'task', task: 'moonwalk' });
-  if (/\b(sleep|bed|bunk|nap)\b/.test(t)) return o('Now that I can do.', { type: 'goto', place: 'bunk' });
-  if (/\b(hi|hello|hey|morning|evening|afternoon|wave)\b/.test(t)) return o(`Hey Commander, ${f} here.`, { type: 'emote', emote: 'wave' });
-  return o(['Copy that, Commander.', 'Yep, got you.', 'Sure thing.'][Math.floor(Math.random() * 3)], { type: 'none' });
+const pick = <T,>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
+const ATTENTION = /\b(listen|attention|gather|huddle|assemble|hear me|over here|come (here|over|to me)|get (over )?here|to me)\b/i;
+/** a plain-language reading of what the Commander asked for; used when the language model returns no action, so an order is never lost */
+export function parseIntent(text: string): CrewAction | null {
+  const t = text.toLowerCase(), T = (re: RegExp) => re.test(t);
+  if (T(/\b(follow me|come with me|come along|tag along|stick with me|walk with me)\b/)) return { type: 'follow' };
+  if (T(/\b(dance|boogie)\b/)) return { type: 'emote', emote: 'dance' };
+  if (T(/\b(jump|hop|bounce)\b/)) return { type: 'emote', emote: 'jump' };
+  if (T(/\bsalute\b/)) return { type: 'emote', emote: 'salute' };
+  if (T(/\b(thumbs|thumbs up)\b/)) return { type: 'emote', emote: 'thumbsup' };
+  if (T(/\bshrug\b/)) return { type: 'emote', emote: 'shrug' };
+  if (T(/\bfacepalm\b/)) return { type: 'emote', emote: 'facepalm' };
+  if (T(/\b(wave|say hi|say hello|give me a wave)\b/)) return { type: 'emote', emote: 'wave' };
+  if (T(/\b(samples?|rocks?|regolith|collect|geology)\b/)) return { type: 'task', task: 'sample' };
+  if (T(/\b(dust|clean|brush|sweep)\b.*\b(panels?|array|solar)\b|\b(panels?|solar|array)\b.*\b(dust|clean|brush)\b/)) return { type: 'task', task: 'dust' };
+  if (T(/\binspect|\bcheck (the )?(batter(y|ies)|tanks?|radiator|equipment|gear|outside)/)) return { type: 'task', task: 'inspect' };
+  if (T(/\b(moonwalk|walk outside|go outside|go out|step outside|suit up|eva|surface)\b/)) return { type: 'task', task: 'moonwalk' };
+  if (T(/\bstar ?gaz|\b(look|watch|see|check) (at )?the (stars|sky|earth)\b/)) return { type: 'task', task: 'stargaze' };
+  if (T(/\b(photo|photos|picture|pictures|selfie)\b/)) return { type: 'task', task: 'photo' };
+  if (T(/\b(journal|diary|write in)\b/)) return { type: 'task', task: 'journal' };
+  if (T(/\b(stretch|exercise|workout|work out)\b/)) return { type: 'task', task: 'stretch' };
+  if (T(/\b(coffee|snack|tea|drink|food|eat|hungry)\b/)) return { type: 'task', task: 'coffee' };
+  if (T(/\bradio check\b/)) return { type: 'task', task: 'radio' };
+  if (T(/\b(software|update|upgrade|patch)\b/)) return { type: 'task', task: 'update' };
+  if (T(/\b(racks?|life support|oxygen|scrubber|water reclaimer|regulator)\b/)) return { type: 'task', task: 'rack' };
+  if (T(/\b(lab|experiment|microscope)\b/)) return { type: 'task', task: 'lab' };
+  if (T(/\b(window|porthole)\b/)) return { type: 'goto', place: 'window' };
+  if (T(/\b(console|comms|communications)\b/)) return { type: 'goto', place: 'console' };
+  if (T(/\b(galley|kitchen)\b/)) return { type: 'goto', place: 'galley' };
+  if (T(/\b(bunk|bed|sleep|nap|rest|turn in)\b/)) return { type: 'goto', place: 'bunk' };
+  if (T(/\bairlock\b/)) return { type: 'goto', place: 'airlock' };
+  if (T(/\b(middle|centre|center)\b/)) return { type: 'goto', place: 'center' };
+  if (T(/\b(stop|wait|hold (on|up|it)|stay|freeze|stand by|don'?t move)\b/)) return { type: 'stop' };
+  if (ATTENTION.test(t)) return { type: 'come' };
+  return null;
+}
+const ACK: Record<string, string[]> = {
+  come: ['On my way, Commander.', 'Coming right now.', 'Be right there.'], follow: ['Right behind you.', 'Lead the way, Commander.'], stop: ['Holding right here.', 'Not moving a muscle.'],
+  goto: ['Heading there now.', 'On it, moving.', 'Going, Commander.'], task: ['On it, doing it now.', 'Consider it started.', 'Yes, Commander, starting now.'], emote: ['Ha, you got it.', 'Sure thing!'],
 };
+const localReply = (text: string, bot: Bot): Reply => {
+  const a = parseIntent(text), f = bot.spec.first;
+  if (a) return { say: pick(ACK[a.type] ?? ACK.goto), do: a };
+  if (/\b(hi|hello|hey|morning|evening|afternoon|yo)\b/i.test(text)) return { say: `Hey Commander, ${f} here.`, do: { type: 'emote', emote: 'wave' } };
+  return { say: pick(['Copy that, Commander.', 'Yep, got you.', 'Sure thing.']), do: { type: 'none' } };
+};
+const BUMP_LINES = ['Whoa, easy there, Commander!', 'Ow! Watch the shoulder, boss.', 'Heh, personal space, Commander.', 'Careful, I bruise like a peach.', 'Hey! Eyes up, Commander.', 'Oof. Did we just collide?'];
 const localGreeting = (hour: number, bot: Bot): Reply => {
   const part = hour >= 5 && hour < 12 ? 'Morning' : hour >= 12 && hour < 17 ? 'Afternoon' : hour >= 17 && hour < 21 ? 'Evening' : 'Late night';
   return { say: part === 'Late night' ? `Burning the midnight oil, Commander? Same here.` : `${part}, Commander. ${bot.spec.first} reporting in.`, do: { type: 'emote', emote: 'wave' } };
 };
 
 export class CrewTalk {
-  voiceReplies = true; recording = false; busy = false; greeted = false;
+  lastBump = 0; voiceReplies = true; recording = false; busy = false; greeted = false;
   private ctx: AudioContext | null = null; private stop: ((send: boolean) => void) | null = null;
   private cur: { an: AnalyserNode; data: Uint8Array<ArrayBuffer>; bot: Bot; pan: PannerNode | null } | null = null;
   private hist = new Map<string, Turn[]>(); private statusEl: HTMLElement; private subEl: HTMLElement; private box: HTMLElement; private inp: HTMLInputElement; private vchk: HTMLInputElement;
@@ -67,6 +97,7 @@ export class CrewTalk {
     this.box.querySelector('form')!.addEventListener('submit', (e) => { e.preventDefault(); const v = this.inp.value.trim(); this.inp.value = ''; this.closeText(); if (v) void this.converse(v); });
     this.inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); this.closeText(); } });
     this.inp.addEventListener('keyup', (e) => e.stopPropagation());
+    this.crew.onBump = (b, k) => this.onBump(b, k);
   }
 
   // ------------------------------------------------------------ UI helpers
@@ -137,40 +168,80 @@ export class CrewTalk {
     if (named) return { bot: named, d: Math.hypot(p.x - named.x, p.z - named.z) };
     return this.crew.nearest(p, true);
   }
-  private async ask(body: Record<string, unknown>, fallback: Reply): Promise<Reply> {
+  private async ask(body: Record<string, unknown>, fallback: Reply, ms = 14000): Promise<Reply> {
     try {
-      const r = await fetch('/api/crew', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(14000), body: JSON.stringify(body) });
+      const r = await fetch('/api/crew', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(ms), body: JSON.stringify(body) });
       if (!r.ok) throw new Error('crew ' + r.status);
       const j = (await r.json()) as { say?: string; do?: CrewAction };
       if (!j.say) throw new Error('empty'); return { say: j.say, do: j.do ?? { type: 'none' } };
     } catch { return fallback; }
   }
-  private async speak(bot: Bot, text: string, radio: boolean) {
+  private radioTo(bot: Bot) { const p = this.camera.position; return Math.hypot(p.x - bot.x, p.z - bot.z) > 15 || this.crew.playerOutside(p) !== bot.eva; }
+  /** caption + voice. stand=true makes the speaker stop and face the Commander while talking; with an order they keep moving and talk on the go. */
+  private async speak(bot: Bot, text: string, radio: boolean, stand = true, pre?: Promise<AudioBuffer | null>, quiet = false) {
     this.line(`${bot.spec.first} ${bot.spec.name}`.toUpperCase(), text);
     let buf: AudioBuffer | null = null;
-    if (this.voiceReplies) { try { buf = await this.tts(text, bot); } catch { buf = null; } }
-    bot.convo = 'speak';
-    if (buf) await this.play(buf, bot, radio); else if (this.voiceReplies) await this.browserSpeak(text, bot); else await sleep(Math.min(5000, 900 + text.length * 55));
-    bot.lip = 0;
+    if (this.voiceReplies && !(quiet && this.cur)) { try { buf = pre ? await pre : await this.tts(text, bot); } catch { buf = null; } }
+    if (stand && bot.sleepStage < 2) bot.convo = 'speak';
+    if (buf) await this.play(buf, bot, radio); else if (this.voiceReplies && !quiet) await this.browserSpeak(text, bot); else await sleep(Math.min(5000, 900 + text.length * 55));
+    bot.lip = 0; if (stand && bot.convo === 'speak') bot.convo = null;
   }
   private clock() { const d = new Date(); return { hour: d.getHours(), clock: `${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}, ${d.toLocaleDateString([], { weekday: 'long' })}` }; }
 
   async converse(text: string) {
     if (this.busy) return; this.busy = true;
     try {
+      if (isBroadcast(text)) { await this.broadcast(text); return; }
       const t = this.target(text); if (!t) { this.status('NOBODY IS AROUND TO HEAR YOU', 2500); return; }
-      const bot = t.bot, p = this.camera.position, radio = t.d > 15 || this.crew.playerOutside(p) !== bot.eva;
+      const bot = t.bot, p = this.camera.position, radio = this.radioTo(bot);
       this.line('YOU', text, true);
       if (bot.sleepStage < 2) bot.convo = 'think';
       this.status(`${bot.spec.first.toUpperCase()} IS THINKING…`);
       const h = this.hist.get(bot.spec.name) ?? []; const ck = this.clock();
-      const res = await this.ask({ who: bot.spec.name, kind: 'chat', text, ctx: bot.ctx(), history: h.map((x) => ({ role: x.role === 'me' ? 'me' : 'you', text: x.text })), radio, ...ck }, localReply(text, bot));
+      const res = await this.ask({ who: bot.spec.name, kind: 'chat', text, ctx: bot.ctx(), history: h.map((x) => ({ role: x.role === 'me' ? 'me' : 'you', text: x.text })), radio, alert: this.crew.alert, ...ck }, localReply(text, bot));
+      let act = res.do; const intent = parseIntent(text); if (act.type === 'none' && intent && intent.type !== 'stop') act = intent;   // an order is never dropped
       h.push({ role: 'me', text }, { role: 'you', text: res.say }); this.hist.set(bot.spec.name, h.slice(-12));
       this.status('');
-      if (res.do.type === 'emote') bot.perform(res.do, p);
-      await this.speak(bot, res.say, radio);
-      bot.convo = null; if (res.do.type !== 'emote' && res.do.type !== 'none' && !this.crew.alert) bot.perform(res.do, p);   // nobody wanders off during a shelter/lockdown alert
-    } finally { this.busy = false; for (const b of this.crew.bots) if (b.convo) b.convo = null; this.status(''); }
+      // do it NOW and talk while doing it: movement orders start this instant, the voice line plays as they go
+      const moves = act.type !== 'none' && act.type !== 'emote';
+      if (act.type !== 'none') { if (moves) bot.convo = null; bot.perform(act, p); }
+      await this.speak(bot, res.say, radio, !moves);
+    } finally { this.busy = false; for (const b of this.crew.bots) if (b.convo === 'think' || b.convo === 'listen') b.convo = null; this.status(''); }
+  }
+
+  /** "everyone, listen up": the whole crew hears it, turns, obeys at once and answers in turn (nearest first) */
+  private async broadcast(text: string) {
+    const p = this.camera.position, ck = this.clock();
+    const near = [...this.crew.bots].sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z));
+    this.line('YOU', text, true); this.status('EVERYONE IS LISTENING…');
+    for (const b of near) if (b.sleepStage < 2) b.convo = 'think';
+    const intent = parseIntent(text) ?? (ATTENTION.test(text) ? ({ type: 'come' } as CrewAction) : null);
+    let replies: { who: string; say: string; do: CrewAction }[] = [];
+    try {
+      const r = await fetch('/api/crew', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(14000), body: JSON.stringify({ who: 'ALL', text, crew: near.map((b) => { const c = b.ctx(); return { name: c.name, state: c.state, doing: c.doing }; }), alert: this.crew.alert, ...ck }) });
+      if (r.ok) replies = ((await r.json()) as { replies?: typeof replies }).replies ?? [];
+    } catch { replies = []; }
+    this.status('');
+    const lines = ['Right here, Commander.', 'Listening.', 'Yep, all ears.', 'Go ahead, Commander.'];
+    const items = near.map((b, i) => {
+      const r = replies.find((x) => x.who === b.spec.name); let act: CrewAction = r?.do ?? { type: 'none' }; if (act.type === 'none' && intent) act = intent;
+      return { bot: b, say: r?.say || lines[i % 4], act, radio: this.radioTo(b) };
+    });
+    // everyone obeys at once...
+    for (const it of items) { if (it.act.type !== 'none' && !this.crew.alert) { if (it.act.type !== 'emote') it.bot.convo = null; it.bot.perform(it.act, p); } else if (it.bot.sleepStage < 2) it.bot.convo = 'listen'; }
+    // ...then they answer one after another (audio is fetched in parallel so there is no dead air between voices)
+    const pre = items.map((it) => (this.voiceReplies ? this.tts(it.say, it.bot).catch(() => null) : Promise.resolve(null)));
+    for (let i = 0; i < items.length; i++) { const it = items[i], moves = it.act.type !== 'none' && it.act.type !== 'emote'; await this.speak(it.bot, it.say, it.radio, !moves, pre[i]); }
+  }
+
+  /** the player walked into someone: they stumble (crew.ts), look round and say something about it */
+  private onBump(bot: Bot, strength: number) {
+    const now = performance.now(); if (now - this.lastBump < 3500 || bot.sleepStage > 0) return; this.lastBump = now;
+    void (async () => {
+      const canned = pick(BUMP_LINES), loud = this.busy || !!this.cur;
+      const res = loud ? { say: canned, do: { type: 'none' } as CrewAction } : await this.ask({ who: bot.spec.name, kind: 'bump', strength, ctx: bot.ctx(), alert: this.crew.alert, ...this.clock() }, { say: canned, do: { type: 'none' } }, 5000);
+      if (!bot.convo) bot.convo = null; await this.speak(bot, res.say, false, true, undefined, loud);
+    })();
   }
 
   /** the nearest crew member says a one-line hello that fits the time of day where the player is */
@@ -187,12 +258,27 @@ export class CrewTalk {
   }
 
   // ------------------------------------------------------------ microphone (push to open, auto-stops on silence)
+  private async micStream(): Promise<MediaStream> {
+    if (!navigator.mediaDevices?.getUserMedia) throw Object.assign(new Error('mediaDevices unavailable (needs https or localhost)'), { name: 'NoMediaDevices' });
+    try { return await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
+    catch (e) { const n = (e as { name?: string }).name; if (n === 'NotAllowedError' || n === 'SecurityError') throw e; return navigator.mediaDevices.getUserMedia({ audio: true }); }   // odd devices reject the processing hints
+  }
+  private micMessage(e: unknown) {
+    const n = (e as { name?: string })?.name ?? '', d = document as unknown as { permissionsPolicy?: { allowsFeature(f: string): boolean }; featurePolicy?: { allowsFeature(f: string): boolean } };
+    const blockedByHeader = (d.permissionsPolicy ?? d.featurePolicy)?.allowsFeature('microphone') === false;
+    if (blockedByHeader) return 'MIC DISABLED BY THIS SITE’S PERMISSIONS-POLICY HEADER, REDEPLOY WITH THE UPDATED vercel.json';
+    if (n === 'NotAllowedError' || n === 'SecurityError') return 'MIC PERMISSION DENIED, CLICK THE LOCK ICON BY THE ADDRESS AND ALLOW MICROPHONE';
+    if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'NO MICROPHONE FOUND, CHECK THE BROWSER’S INPUT DEVICE';
+    if (n === 'NotReadableError' || n === 'AbortError') return 'MIC IS BUSY IN ANOTHER APP OR TAB';
+    if (n === 'NoMediaDevices') return 'MIC NEEDS HTTPS OR LOCALHOST';
+    return `MIC ERROR (${n || 'unknown'}), TYPE INSTEAD`;
+  }
   async toggleMic() {
     if (this.recording) { this.stop?.(true); return; }
     if (this.busy) return;
     let stream: MediaStream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
-    catch { this.status('MIC BLOCKED OR MISSING, TYPE INSTEAD', 3500); this.openText(); return; }
+    try { stream = await this.micStream(); }
+    catch (e) { console.warn('[crew mic]', e); this.status(this.micMessage(e), 7000); this.openText(); return; }
     const c = this.ac(), node = c.createMediaStreamSource(stream), an = c.createAnalyser(); an.fftSize = 1024; node.connect(an);
     const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find((m) => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) ?? '';
     const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined), chunks: Blob[] = [];
