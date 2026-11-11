@@ -24,6 +24,20 @@ Keep 5 crew alive at Shackleton for 14 days. The sim (`src/sim.ts`) couples powe
 - Clock: one fixed rate (600x, so 14 days take about 35 minutes) that eases to 60x on its own during a decision card or an EVA. No player-controlled time warp. Keys: M tablet, P array, 1-3 decide, H ask Houston, E interact. Food production is deliberately left out of this version.
 - Training tempo: events are far more frequent than in reality. `SIM.commsAlwaysOn` keeps the Earth link up regardless of line of sight; set it to `false` for the strict rules.
 
+### Crises (17 types, about 10 per mission) and what they force you to do
+
+Every crisis stays open until the crew acts on it, and the open ones get worse. At most three are ever open at once.
+
+- **Dust storm (lockdown):** electrostatic dust (the Moon has no wind). Fog and drifting dust build outside, the Hab portholes go opaque, hatches seal from the inside, walking drops to a slow pace with no sprint or jump, and the tablet opens so eyes go to the systems. Everyone outside is called in.
+- **Meteoroid swarm (lockdown), moonquake** (camera shake, hidden damage you must inspect for), **battery thermal runaway, electrical fire, water line rupture, coolant pump failure, solar radio blackout, crew injury, array string fault, pressure sensor alarm** (real leak or bad sensor? verify first), plus dust cloud, solar storm, hull breach, scrubber, oxygenator and antenna faults.
+- **Shelter / lockdown recall:** pressing "enter storm shelter" on the tablet, choosing SHELTER NOW, or any lockdown makes every crew member (including the sleeper and whoever is on EVA) drop what they are doing and run back to the hab. The duty roster freezes until the all-clear, and anyone still outside takes the full dose. If you are outside, a repeating alarm and a flashing banner tell you to get in, and hatches never lock you out from the surface.
+- Airlocks: crew use the nearer airlock one at a time (a mutex), a hatch never opens while its partner is open (including one the player left open, which the crew will seal after a few seconds), and the player cannot cycle or open an airlock a crew member is using. A crew member caught inside an airlock when the order comes goes back the way they came. Crew that get pinned against an obstacle (such as a parked rover) squeeze past it instead of staying stranded.
+- Pacing: roughly 0.7 crises a day, never closer than 12 sim hours. The first three are always a dust storm, a moonquake and a meteoroid swarm, about a day apart; random after that. Real flare activity nudges the odds up a little.
+- Every crisis leaves visible evidence: meteor tracers with impact flashes and ejecta thrown in long lunar-gravity arcs, a battery explosion, a lab fire with smoke and orange light, steam from a failed radiator, a water spray inside the hab, a vapour jet from a hull breach, arcing sparks at a faulty array string, heavy quake shaking with stuttering lights, dust haze and drifting dust in a storm, and radiation hits flashing across the view. Crew visibly cough, clutch an injury or sway dizzily when the air, heat, a fire, an injury or radiation is hurting them.
+- The tablet (M) has an Instructor panel to inject any fault on demand so you can practise or see the effects without waiting.
+- Emergencies pull the crew off their current task; you can also stop a task from the tablet (progress is lost).
+- Keys: **Tab closes the comms desk and the radio pad** (Esc is only pause).
+
 ## Real terrain (LRO LOLA)
 
 The sim loads `public/terrain/shackleton.{json,bin}` when present and falls back to procedural terrain otherwise. The tile is baked from `LDEM_875S_5M` (5 m/px, 87.5 S to the pole) by `scripts/bake-terrain.mjs`, which reads everything it needs from the product's `.LBL`, detects the raster's axis orientation from the data, picks the best-lit spot on Shackleton's rim, and rotates the tile into the simulator's frame (+x east, +z south) so the Horizons Sun and Earth directions line up with the terrain shadows.
@@ -86,3 +100,33 @@ E uses what you are facing, F is its second action. Examples: wardrobe (E open o
 ## Terrain
 
 The baked LOLA tile is a rotated square inside a square array, so about half of the array is no-data zeros. They are filled with the nearest real height at load (`fillNoData` in `src/terrain.ts`), which removed fake cliffs up to 2 km tall near the tile edges.
+## Talking to the crew (branch `crew-voice`)
+
+Press **V** to open the mic (it closes when you stop talking; press V again to send, Esc to cancel) or **T** to type. The nearest awake
+crew member - or whoever you name ("Rafa, come over here") - turns to face you, answers in their own voice, then does what you asked or
+goes back to their task. Replies always appear as captions; voice replies can be turned off in the text panel. When you start playing,
+the nearest crew member greets you with a one-liner that fits your local time of day, and crew nod, wave or salute as you walk past.
+
+```
+mic  ->  /api/stt   Groq Whisper (whisper-large-v3-turbo), ElevenLabs Scribe as backup
+     ->  /api/crew  Groq writes one informal in-character line + picks an action the bot can really do
+     ->  /api/tts   ElevenLabs, a distinct voice per person (flash model for low latency), other providers as fallback
+     ->  played from the speaker's position in 3D, mouth driven by the audio
+```
+
+Orders the crew understand: come here, follow me, wait/stop, go to (window, console, galley, lab, racks, bunk, airlock, centre, outside),
+do a task (stargaze, photo, journal, coffee, stretch, update, radio, rack, lab, moonwalk, sample, dust, inspect), and emotes (wave, salute,
+thumbs-up, shrug, jump, dance, facepalm, nod). Orders lapse after a while and the person drifts back to their duty; airlock cycles are never
+interrupted. Talking to someone on EVA (or from outside to someone inside) goes over a filtered suit radio.
+
+Env vars (all optional, existing ones are reused): `GROQ_API_KEY`, `GROQ_CREW_MODEL`, `GROQ_STT_MODEL`, `STT_ORDER` (default `groq,elevenlabs`),
+`STT_LANG` (default `en`), `ELEVENLABS_API_KEY`, `ELEVENLABS_FAST_MODEL`, `ELEVENLABS_VOICE_OKAFOR|WHITAKER|ZHAO|MENDOZA` (override voice ids).
+No keys? The crew still reply from a built-in fallback and the browser's own speech synthesis; typing always works.
+
+### Crew voice update: everyone, orders, bumps, mic fix
+
+- **Mic:** `vercel.json` used to send `Permissions-Policy: microphone=()`, which blocks the mic for the whole page no matter what the browser permission says. It is now `microphone=(self)` (redeploy to pick it up). If the mic still fails, the status line now says why (blocked by header, permission denied, no device, device busy, needs https).
+- **"Everyone / guys / team / all hands / listen up":** the whole crew, sleepers included, hears you. `/api/crew` with `who: "ALL"` returns one short, different line plus an action per person; they obey at once and answer one after another, nearest first.
+- **Direct orders are immediate:** the named (or nearest) person acknowledges *and moves in the same instant*, talking as they go. The prompt forbids refusals and a plain-language intent parser backs up the model so an order is never dropped. Orders beat a shift change; only a shelter alert outranks them, and an airlock cycle already in progress is finished at a run.
+- **Bump physics:** you and each crew member are soft discs. Walking into someone shoves both of you, they stumble, look round and say something (Groq, with canned fallbacks). Standing next to someone is not a bump; sleepers and people in the other environment are never bumped.
+- **Polo fix:** sleeves were narrower than the shoulder under them, so skin poked through. Sleeves are now wider, hemmed, and the polo/trouser seam no longer z-fights.
