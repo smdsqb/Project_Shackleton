@@ -1,6 +1,6 @@
 // Player-facing layer: tablet (power / life support / radiation / crew work), the decision card, alarms and the end-of-mission debrief.
 import { Sim, SIM, LOADS, JOBS, type LoadId, type JobId } from './sim';
-import { Director, type ActiveEvent } from './events';
+import { Director, EVENTS, type ActiveEvent } from './events';
 
 const CSS = `
 #ops{position:fixed;inset:3vh 3vw;display:none;flex-direction:column;z-index:6;background:rgba(4,10,16,.95);border:1px solid rgba(255,176,0,.45);border-radius:6px;font:12px/1.6 ui-monospace,Menlo,Consolas,monospace;color:#d7dde5;box-shadow:0 0 60px #000}
@@ -17,6 +17,8 @@ const CSS = `
 #decision .opt{display:flex;gap:10px;padding:6px 8px;margin:4px 0;border:1px solid rgba(255,255,255,.18);cursor:pointer}#decision .opt:hover{border-color:#4fd8ff;background:rgba(79,216,255,.08)}#decision .opt b{color:#4fd8ff;font-weight:400}#decision .opt small{display:block;color:#8d98a6;font-size:11px}
 #decision .t{height:4px;background:rgba(255,255,255,.14);margin:8px 0}#decision .t i{display:block;height:100%;background:#ff5a5a;width:100%}#decision .ask{font-size:11px;color:#9aa6b4;min-height:18px}#decision .ask.rx{color:#7ee787}
 #result{position:fixed;top:11vh;left:50%;transform:translateX(-50%);width:min(560px,90vw);display:none;z-index:5;background:rgba(4,10,16,.92);border-left:3px solid #ffb000;padding:10px 14px;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#e8edf3}
+#dusthaze{position:fixed;inset:0;pointer-events:none;z-index:1;opacity:0;transition:opacity .7s ease;background:radial-gradient(ellipse 85% 80% at 50% 55%,rgba(168,142,104,.55),rgba(112,92,66,.9));mix-blend-mode:normal}
+#radfx{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;mix-blend-mode:screen}
 #banner{position:fixed;top:4vh;left:50%;transform:translateX(-50%);display:none;z-index:4;padding:8px 22px;font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.2em;color:#fff;background:rgba(160,20,20,.88);border:1px solid #ff8a7a;pointer-events:none}#banner.bad{animation:bn .8s steps(2) infinite}#banner.calm{background:rgba(30,60,90,.88);border-color:#4fd8ff;animation:none}@keyframes bn{50%{background:rgba(90,10,10,.88)}}
 #alerts{position:fixed;top:14px;right:16px;z-index:2;text-align:right;font:11px/1.7 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.1em;pointer-events:none}#alerts .warning{color:#ff5a5a}#alerts .caution{color:#ffb000}#alerts .info{color:#9aa6b4}
 #endscr{position:fixed;inset:0;display:none;z-index:9;background:rgba(2,5,9,.96);align-items:center;justify-content:center;font:13px/1.6 ui-monospace,Menlo,Consolas,monospace;color:#d7dde5}#endscr .box{width:min(720px,92vw);max-height:90vh;overflow:auto;padding:24px}#endscr h1{font-weight:400;letter-spacing:.2em;font-size:22px;margin:0 0 4px}#endscr .big{font-size:64px;line-height:1}#endscr .row{display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.1);padding:3px 0}#endscr button{margin-top:16px;font:inherit;letter-spacing:.16em;color:#05070a;background:#ffb000;border:0;padding:10px 22px;cursor:pointer}`;
@@ -28,6 +30,15 @@ export type UiHost = { sim: Sim; dir: Director; openComms(): void; onTabletClose
 
 let ac: AudioContext | null = null;
 export function ensureAudio() { try { ac ??= new AudioContext(); void ac.resume(); } catch { /* no audio */ } }
+export function boom(vol: number) { // an impact or explosion heard through the ground: noise burst plus a falling thump
+  if (!ac) return; const n = Math.floor(ac.sampleRate * 1.1), b = ac.createBuffer(1, n, ac.sampleRate), d = b.getChannelData(0); for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ac.sampleRate * 0.28));
+  const s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain(); s.buffer = b; f.type = 'lowpass'; f.frequency.value = 220; g.gain.value = Math.min(1, vol) * 1.4; s.connect(f).connect(g).connect(ac.destination); s.start();
+  const o = ac.createOscillator(), og = ac.createGain(), t = ac.currentTime; o.frequency.setValueAtTime(70, t); o.frequency.exponentialRampToValueAtTime(28, t + 0.7); og.gain.setValueAtTime(0.9 * Math.min(1, vol), t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.8); o.connect(og).connect(ac.destination); o.start(); o.stop(t + 0.9);
+}
+export function hiss() { // air escaping through a hole
+  if (!ac) return; const n = Math.floor(ac.sampleRate * 2.4), b = ac.createBuffer(1, n, ac.sampleRate), d = b.getChannelData(0); for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.min(1, i / 6000) * Math.min(1, (n - i) / 20000);
+  const s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain(); s.buffer = b; f.type = 'highpass'; f.frequency.value = 2600; g.gain.value = 0.28; s.connect(f).connect(g).connect(ac.destination); s.start();
+}
 export function rumble(sec: number) { // low rumble for a moonquake
   if (!ac) return; const n = Math.floor(ac.sampleRate * sec), b = ac.createBuffer(1, n, ac.sampleRate), d = b.getChannelData(0); let last = 0;
   for (let i = 0; i < n; i++) { last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = last * 3.5 * Math.min(1, i / 4000) * Math.min(1, (n - i) / 8000); }
@@ -65,12 +76,14 @@ export class UI {
      <section><h3>CREW WORK AND MISSION</h3><div class="sub">The crew can do one job at a time. Their hours are a resource too.</div>
       ${row('lock', 'Lockdown')}${row('crewout', 'Crew outside')}${row('day', 'Mission day')}${bar('day')}${row('health', 'Crew health')}${bar('health')}${row('morale', 'Morale')}${row('sci', 'Science done')}${row('job', 'Current job')}${bar('job')}<div><button data-act="stopjob">STOP CURRENT TASK</button></div>
       ${(Object.keys(JOBS) as JobId[]).map((id) => `<button data-job="${id}" title="${JOBS[id].why}">${JOBS[id].name.toUpperCase()} · ${JOBS[id].hours} H${JOBS[id].kw ? ' · ' + JOBS[id].kw + ' KW' : ''}</button>`).join('')}
-      <div class="sub" style="margin-top:8px">LOG</div><div class="log" data-k="log"></div></section></div>`;
+      <div class="sub" style="margin-top:8px">LOG</div><div class="log" data-k="log"></div></section>
+     <section><h3>INSTRUCTOR · INJECT A FAULT</h3><div class="sub">Training tool: set off any crisis right now to see it and practise the response. The tablet closes so you can watch.</div>${EVENTS.map((e) => `<button data-inject="${e.id}">${e.title}</button>`).join('')}</section></div>`;
     document.body.append(this.ops);
     this.ops.querySelectorAll<HTMLElement>('[data-k]').forEach((e) => this.k.set(e.dataset.k!, e)); this.ops.querySelectorAll<HTMLElement>('[data-b]').forEach((e) => this.bars.set(e.dataset.b!, e));
     this.ops.querySelectorAll<HTMLInputElement>('[data-load]').forEach((e) => this.loadBoxes.set(e.dataset.load as LoadId, e)); this.ops.querySelectorAll<HTMLElement>('[data-shed]').forEach((e) => this.shedTags.set(e.dataset.shed as LoadId, e));
     this.ops.addEventListener('click', (e) => {
       const t = (e.target as HTMLElement).closest('button') as HTMLElement | null; if (!t) return; const s = h.sim;
+      if (t.dataset.inject) { const r = h.dir.inject(t.dataset.inject); if (r) this.flash(r); else this.close(); return; }
       if (t.dataset.job) { const r = s.startJob(t.dataset.job as JobId); if (r) this.flash(r); }
       else if (t.dataset.act === 'stopjob') s.cancelJob();
       else if (t.dataset.act === 'close') this.close(); else if (t.dataset.act === 'comms') { this.close(true); h.openComms(); }
@@ -85,12 +98,23 @@ export class UI {
     this.card = document.createElement('div'); this.card.id = 'decision'; document.body.append(this.card);
     this.card.addEventListener('click', (e) => { const o = (e.target as HTMLElement).closest('[data-i]') as HTMLElement | null; if (o) h.dir.resolve(+o.dataset.i!); else if ((e.target as HTMLElement).closest('[data-ask]')) this.ask(); });
     this.res = document.createElement('div'); this.res.id = 'result'; document.body.append(this.res);
+    this.haze = document.createElement('div'); this.haze.id = 'dusthaze'; document.body.append(this.haze);
+    this.radCv = document.createElement('canvas'); this.radCv.id = 'radfx'; document.body.append(this.radCv);
     this.alertsEl = document.createElement('div'); this.alertsEl.id = 'alerts'; document.body.append(this.alertsEl);
     this.end = document.createElement('div'); this.end.id = 'endscr'; document.body.append(this.end);
     h.dir.onEvent = (ev) => { this.showCard(ev); beep('event'); };
     h.dir.onResolve = (m) => { this.card.style.display = 'none'; this.lastEvent = null; this.res.textContent = m; this.res.style.display = 'block'; this.resT = 9; beep('ok'); };
   }
 
+  private haze!: HTMLElement; private radCv!: HTMLCanvasElement; private radT = 0;
+  /** dust haze over the view while you are outside in a storm (0..1) */
+  setHaze(k: number) { this.haze.style.opacity = String(Math.max(0, Math.min(1, k)).toFixed(2)); }
+  /** radiation hits: bright speckles flashing across the view, like the flashes astronauts see (0..1) */
+  setRad(k: number, dt: number) {
+    this.radT -= dt; if (this.radT > 0) return; this.radT = 0.09; const c = this.radCv; if (c.width !== innerWidth) { c.width = innerWidth; c.height = innerHeight; }
+    const g = c.getContext('2d'); if (!g) return; g.clearRect(0, 0, c.width, c.height); if (k < 0.02) return;
+    for (let i = 0, n = Math.floor(8 + 70 * k); i < n; i++) { const x = Math.random() * c.width, y = Math.random() * c.height, r = 0.8 + Math.random() * 1.8; g.fillStyle = `rgba(${200 + Math.random() * 55},${220 + Math.random() * 35},255,${0.35 + Math.random() * 0.6})`; g.fillRect(x, y, r, r); if (Math.random() < 0.08 * k) { g.fillRect(x, y, r * 7, r * 0.6); } }
+  }
   private bannerEl: HTMLElement | null = null; private bannerText = '';
   /** Big banner for lockdown / recall. null hides it. */
   banner(text: string | null, tone: 'bad' | 'calm' = 'bad') {

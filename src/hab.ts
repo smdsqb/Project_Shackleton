@@ -68,7 +68,7 @@ function aoBlob(w: number, d: number) {
 
 export class Hab {
   prompt = ''; toast = ''; suitHours = EVA_H; exposed = false; where = 'HAB';
-  lockdown = false; alarm = false; lockHeld: boolean[] = [false, false]; private paneM!: THREE.MeshPhysicalMaterial; private shutterK = 0;
+  lockdown = false; alarm = false; flicker = 0; lockHeld: boolean[] = [false, false]; private paneM!: THREE.MeshPhysicalMaterial; private shutterK = 0;
   curtains: THREE.Group[] = []; bags: THREE.Object3D[] = [];
   suitState: 'rack' | 'donning' | 'on' | 'doffing' = 'rack';
   taskLabel = ''; taskProgress = 0; onComms: (() => void) | null = null;
@@ -385,7 +385,7 @@ export class Hab {
     this.powerK += (target - this.powerK) * Math.min(1, dt * 2.5);
     const wander = 1 + 0.012 * Math.sin(this.clock * 3.1) + 0.008 * Math.sin(this.clock * 7.3 + 1);
     const pulse = this.alarm ? 0.6 + 0.4 * Math.sin(this.clock * 6) : 1; // fire / battery alarm: red lights pulsing
-    for (const { l, base, color } of this.lights) { l.intensity = base * this.powerK * wander * pulse; l.color.setHex(this.powerK < 0.3 || this.alarm ? 0xff3b2a : color); }
+    for (const { l, base, color } of this.lights) { l.intensity = base * this.powerK * wander * pulse * (1 - this.flicker * (0.55 + 0.45 * Math.sin(this.clock * 41) * Math.sin(this.clock * 13))); l.color.setHex(this.powerK < 0.3 || this.alarm ? 0xff3b2a : color); }
     for (const { m, base } of this.glows) m.emissiveIntensity = base * Math.min(1, this.powerK * 1.1);
     this.stepSuit(dt, sim);
     for (const f of this.fans) f.rotation.x += dt * 16 * this.powerK;

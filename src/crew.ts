@@ -335,7 +335,7 @@ const TASKS: TaskDef[] = [
 /** is the Commander talking to the whole crew? */
 export const isBroadcast = (t: string) => /\b(everyone|everybody|every one|all of you|you all|y'all|you guys|guys|all hands|team|crew|folks|listen up)\b/i.test(t);
 export interface CrewAction { type: string; place?: string; task?: string; emote?: string }
-const EMOTES: Record<string, number> = { stumble: 1.5, nod: 1.8, wave: 2.6, salute: 2.2, thumbsup: 2.4, shrug: 2.2, jump: 1.6, dance: 6, facepalm: 2.4 };
+const EMOTES: Record<string, number> = { cough: 3.2, clutch: 4.5, dizzy: 4.2, stumble: 1.5, nod: 1.8, wave: 2.6, salute: 2.2, thumbsup: 2.4, shrug: 2.2, jump: 1.6, dance: 6, facepalm: 2.4 };
 const LABEL: Record<string, string> = { sleep: 'sleeping in a bunk', shelter: 'sheltering in the middle of the hab because of an alert', stargaze: 'stargazing out of a porthole', photo: 'taking photos of the sky from a porthole', journal: 'writing in a journal by the window', coffee: 'making a drink in the galley', stretch: 'stretching out', update: 'running a software update at the comms console', radio: 'doing a radio check at the comms console', rack: 'checking the life-support racks', lab: 'working at a lab bench', moonwalk: 'out on a moonwalk', sample: 'collecting rock samples outside', dust: 'brushing dust off the solar array outside', inspect: 'inspecting outdoor equipment' };
 function placeStop(place: string, b: Bot): Stop | null {
   const d = 60;
@@ -360,7 +360,7 @@ const NEXT: Record<Slot, Slot> = { sleep: 'window', window: 'comms', comms: 'eva
 export class Bot {
   rig: Rig; x = 0; z = 0; yaw = 0; v = 0; phase = Math.random() * TAU; t = Math.random() * 50; ph0 = Math.random() * 10;
   eva = false; slot: Slot = 'window'; task: TaskDef | null = null; taskLeft = 0; stops: Stop[] = []; si = 0; dwell = 0; doing = false;
-  nodes: Node[] = []; waitLeft = 0; hurry = false; lk: number | null = null; ilk = 0; curNode: Node | null = null; bestD = 1e9; stuckT = 0; free = false; sleepStage = 0; bay = 0; pending: Slot | null = null; hold = 0; waitFor: Bot | null = null;
+  nodes: Node[] = []; waitLeft = 0; hurry = false; sick: string | null = null; sickT = 0; lk: number | null = null; ilk = 0; curNode: Node | null = null; bestD = 1e9; stuckT = 0; free = false; sleepStage = 0; bay = 0; pending: Slot | null = null; hold = 0; waitFor: Bot | null = null;
   cur: Pose = { ...BASE }; py = 0.9; roll = 0; rollT = rnd(40, 90); blink = 0; blinkT = rnd(1, 4); sacT = 0; sac: [number, number] = [0, 0];
   gaze: [number, number] = [0, 0]; glance = 0; glanceT = rnd(6, 16); talk = 0; cruise: number;
   convo: 'listen' | 'think' | 'speak' | null = null; lip = 0; emote: { name: string; t: number; dur: number } | null = null;
@@ -493,6 +493,7 @@ export class Bot {
     const c = this.sleepStage === 0 ? this.convo : null; let up = 0;
     if (c === 'listen') { p.hdZ += 0.1; p.hdX += 0.05 * sin(T * 1.1); } else if (c === 'think') { p.hdX -= 0.1; p.hdZ -= 0.08; }
     if (this.sleepStage === 0 && this.v < 0.4 && (c === 'speak' || this.lip > 0.08)) { const g = 0.5 + 0.5 * sin(T * 0.9); p.hdX += 0.05 * sin(T * 3.1); p.hdY += 0.05 * sin(T * 1.7); p.rsX = min(p.rsX, -0.45 - 0.25 * g); p.reX = -1.05 + 0.3 * sin(T * 3.3); p.rsZ = -0.2; p.lsX = min(p.lsX, -0.1); }
+    if (this.sick && !this.emote && this.sleepStage === 0 && !this.convo) { this.sickT -= dt; if (this.sickT <= 0) { this.emote = { name: this.sick, t: 0, dur: EMOTES[this.sick] }; this.sickT = rnd(0.4, 2.2); } }   // symptoms keep recurring until the cause is fixed
     const e = this.emote;
     if (e) {
       e.t += dt;
@@ -500,6 +501,9 @@ export class Bot {
       else {
         const u = e.t / e.dur, env = clamp(min(u / 0.15, (1 - u) / 0.2), 0, 1), t = e.t, bl = (k: string, v: number) => { p[k] = lerp(p[k], v, env); };
         switch (e.name) {
+          case 'cough': bl('rsX', -1.9); bl('reX', -2.3); bl('lsX', -0.5); bl('leX', -1.0); p.spX += (0.32 + 0.07 * sin(t * 23)) * env; p.hdX += 0.35 * env; break;   // hunched, hand to the mouth, shaking
+          case 'clutch': bl('lsX', -0.55); bl('leX', -1.75); bl('lsZ', 0.45); bl('rsX', -0.15); bl('lkX', 0.28); bl('rkX', 0.18); p.spX += 0.38 * env; p.hdX += 0.32 * env; break;   // holding a hurt shoulder, bent over
+          case 'dizzy': bl('rsX', -2.4); bl('reX', -1.9); bl('lkX', 0.15); bl('rkX', 0.2); p.hdZ += 0.3 * sin(t * 2.3) * env; p.hdX += 0.18 * env; p.spX += (0.1 + 0.05 * sin(t * 2.3)) * env; break;   // hand to the forehead, swaying
           case 'stumble': bl('lsX', -0.7); bl('rsX', -0.7); bl('lsZ', 0.75); bl('rsZ', -0.75); bl('leX', -0.5); bl('reX', -0.5); bl('lkX', 0.35); bl('rkX', 0.35); p.spX += 0.14 * env; p.hdX -= 0.12 * env; break;
           case 'nod': p.hdX += 0.26 * sin(t * TAU * 1.5) * env; break;
           case 'wave': bl('rsZ', -2.0); bl('rsX', -0.15); bl('reX', -0.4 + 0.45 * sin(t * 9)); break;
@@ -554,7 +558,7 @@ export class Bot {
           if (od < R + 1.2 && od > 0.01) { const w = clamp((R + 1.2 - od) / 1.2, 0, 1) * (od < R ? 2.5 : 1.4), tx = -oz / od, tz = ox / od, side = dx * tx + dz * tz >= 0 ? 1 : -1; dx += ((ox / od) * 0.9 + tx * side * 1.3) * w; dz += ((oz / od) * 0.9 + tz * side * 1.3) * w; }
         }
         const m = hypot(dx, dz) || 1; dx /= m; dz /= m;
-        const cr = n.speed !== undefined ? n.speed * (this.hurry ? 2 : 1) : this.cruise * (this.eva ? 1.55 : 1) * (this.hurry ? 1.7 : 1), tv = this.nodes.length === 1 ? min(cr, 0.35 + d * 0.9) : cr;
+        const cr = (n.speed !== undefined ? n.speed * (this.hurry ? 2 : 1) : this.cruise * (this.eva ? 1.55 : 1) * (this.hurry ? 1.7 : 1)) * (this.sick ? 0.6 : 1), tv = this.nodes.length === 1 ? min(cr, 0.35 + d * 0.9) : cr;
         const da = wrap(atan2(dx, dz) - this.yaw); this.yaw += clamp(da, -3.2 * dt, 3.2 * dt);
         this.v += (tv * max(0, cos(da)) - this.v) * min(1, dt * 3);
         this.x += sin(this.yaw) * this.v * dt; this.z += cos(this.yaw) * this.v * dt; moving = this.v > 0.12;
@@ -672,6 +676,11 @@ export class Crew {
     if (on) { for (const k of [0, 1]) if (!this.held[k]) { this.hab.setDoor(k, 'inner', false); this.hab.setDoor(k, 'outer', false); } this.bots.forEach((b, i) => b.recall(i)); }
     else { this.bots.forEach((b) => b.release()); this.next = rnd(CREW_CFG.rotateMin, CREW_CFG.rotateMax); }
   }
+  /** make some of the crew visibly ill (null clears it). The injured one is always the same crew member, so it reads as a person, not a glitch. */
+  setSymptom(kind: string | null, n: number) {
+    // victims come from the crew who are awake and on their feet (a sleeper cannot be seen coughing); fixed preference order so it reads as a person
+    const pref = kind === 'clutch' ? [2, 0, 1, 3] : [0, 1, 2, 3], awake = pref.filter((i) => this.bots[i].sleepStage === 0 && this.bots[i].slot !== 'sleep'), order = [...awake, ...pref.filter((i) => !awake.includes(i))];
+    this.bots.forEach((b, i) => { b.sick = kind && order.indexOf(i) < n ? kind : null; if (!b.sick && (b.emote?.name === 'cough' || b.emote?.name === 'clutch' || b.emote?.name === 'dizzy')) b.emote = null; }); }
   /** crew members currently outside the pressure hull */
   get outside() { return this.bots.filter((b) => b.eva).length; }
   /** true once everyone is back inside and standing at their shelter spot */
