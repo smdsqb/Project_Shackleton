@@ -49,12 +49,36 @@ if (!args.lbl || !args.img) {
 const SIZE = Number(args.size ?? 2048);
 const PICK = Number(args.pick ?? 0);
 
+// Optional output suffix. When set to e.g. "far", files are written as
+// shackleton-far.bin / shackleton-far.json instead of overwriting the primary tile.
+// Used to bake a coarser wide-coverage companion tile alongside the existing near tile.
+const SUFFIX = typeof args.suffix === 'string' && args.suffix.length
+  ? (args.suffix.startsWith('-') ? args.suffix : '-' + args.suffix)
+  : '';
+
+// Optional explicit site coordinates (decimal degrees). When both are provided,
+// the rim-scan is skipped and the tile is centred on these coords. Used to keep a
+// coarser companion tile concentric with the primary tile's site.
+const FORCED_LAT = args['site-lat'] !== undefined ? Number(args['site-lat']) : null;
+const FORCED_LON = args['site-lon'] !== undefined ? Number(args['site-lon']) : null;
+const FORCE_SITE =
+  Number.isFinite(FORCED_LAT) && Math.abs(FORCED_LAT) <= 90 &&
+  Number.isFinite(FORCED_LON) && Math.abs(FORCED_LON) <= 360;
+
 if (!Number.isInteger(SIZE) || SIZE < 64 || SIZE > 8192) {
   throw new Error('--size must be an integer between 64 and 8192.');
 }
 
 if (!Number.isInteger(PICK) || PICK < 0) {
   throw new Error('--pick must be a non-negative integer.');
+}
+
+if (args['site-lat'] !== undefined && !Number.isFinite(FORCED_LAT)) {
+  throw new Error('--site-lat must be a decimal latitude in degrees.');
+}
+
+if (args['site-lon'] !== undefined && !Number.isFinite(FORCED_LON)) {
+  throw new Error('--site-lon must be a decimal longitude in degrees.');
 }
 
 // --------------------------------------------------
@@ -581,9 +605,27 @@ try {
   // SELECT RIM SITE
   // --------------------------------------------------
 
-  console.log('\nScanning Shackleton rim...');
+  let site;
+  let siteLat;
+  let siteLon;
 
-  const candidates = [];
+  if (FORCE_SITE) {
+    // Bypass the rim scan; centre the tile on the explicitly provided coords.
+    console.log(`\nUsing forced site: ${FORCED_LAT}, ${FORCED_LON}`);
+
+    const [fc, fr] = V.fwd(FORCED_LAT, FORCED_LON);
+
+    if (!Number.isFinite(fc) || !Number.isFinite(fr)) {
+      throw new Error('Forced site projects outside the source DEM.');
+    }
+
+    site = { c: fc, r: fr, elev: NaN, lit: NaN };
+    siteLat = FORCED_LAT;
+    siteLon = FORCED_LON;
+  } else {
+    console.log('\nScanning Shackleton rim...');
+
+    const candidates = [];
 
   for (const cr of fit.crest) {
     let bestC = NaN;
@@ -628,29 +670,30 @@ try {
     throw new Error('No valid rim sites were found.');
   }
 
-  candidates.sort((a, b) => b.lit - a.lit);
+    candidates.sort((a, b) => b.lit - a.lit);
 
-  console.log('\nRim site candidates:');
+    console.log('\nRim site candidates:');
 
-  candidates.slice(0, 6).forEach((candidate, i) => {
-    const [lat, lon] = V.inv(candidate.c, candidate.r);
+    candidates.slice(0, 6).forEach((candidate, i) => {
+      const [lat, lon] = V.inv(candidate.c, candidate.r);
 
-    console.log(
-      `  #${i}: ${(candidate.lit * 100).toFixed(1)}% estimated ` +
-      `illumination, ${candidate.elev.toFixed(0)} m elevation, ` +
-      `${lat.toFixed(3)}, ${lon.toFixed(2)}E`
-    );
-  });
+      console.log(
+        `  #${i}: ${(candidate.lit * 100).toFixed(1)}% estimated ` +
+        `illumination, ${candidate.elev.toFixed(0)} m elevation, ` +
+        `${lat.toFixed(3)}, ${lon.toFixed(2)}E`
+      );
+    });
 
-  if (PICK >= candidates.length) {
-    throw new Error(
-      `Pick ${PICK} is invalid. ` +
-      `Only ${candidates.length} candidates were found.`
-    );
+    if (PICK >= candidates.length) {
+      throw new Error(
+        `Pick ${PICK} is invalid. ` +
+        `Only ${candidates.length} candidates were found.`
+      );
+    }
+
+    site = candidates[PICK];
+    [siteLat, siteLon] = V.inv(site.c, site.r);
   }
-
-  const site = candidates[PICK];
-  const [siteLat, siteLon] = V.inv(site.c, site.r);
 
   // --------------------------------------------------
   // LOCAL EAST / NORTH COORDINATES
@@ -958,8 +1001,8 @@ try {
 
   fs.mkdirSync(outputDir, { recursive: true });
 
-  const binPath = path.join(outputDir, 'shackleton.bin');
-  const jsonPath = path.join(outputDir, 'shackleton.json');
+  const binPath = path.join(outputDir, `shackleton${SUFFIX}.bin`);
+  const jsonPath = path.join(outputDir, `shackleton${SUFFIX}.json`);
 
   console.log('\nWriting terrain files...');
 
