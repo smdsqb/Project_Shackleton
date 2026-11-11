@@ -63,7 +63,7 @@ const scene = new THREE.Scene();
   scene.environment = new THREE.PMREMGenerator(renderer).fromScene(env, 0.04).texture;
   scene.environmentIntensity = 0.4; // reflections without washing the shadow sides milky
 }
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 30000);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 45000);
 camera.position.set(-1.5, heightAt(0, 0) + EYE, 0.5);
 scene.add(camera);
 const amb = new THREE.AmbientLight(0x39485c, 0.19); // earthshine and regolith bounce only: shadow sides stay deep, not milky
@@ -130,7 +130,8 @@ function patch(size: number, segs: number, yOff: number, mat: THREE.Material, ho
 function buildWorld() {
   const tex = regolithTexture();
   patch(700, 600, 0, new THREE.MeshStandardMaterial({ color: 0x9a968f, map: tex, bumpMap: tex, bumpScale: 3, roughness: 1 }));
-  patch(10240, 320, -0.6, new THREE.MeshStandardMaterial({ color: 0x4f4c48, roughness: 1 }), 340);   // the whole 10 km tile
+  patch(10240, 320, -0.6, new THREE.MeshStandardMaterial({ color: 0x4f4c48, roughness: 1 }), 340);   // the 10 km near tile at 32 m cells
+  patch(41000, 512, -2.5, new THREE.MeshStandardMaterial({ color: 0x45423f, roughness: 1 }), 5100);   // the far tile (about 41 km) at 80 m cells: the whole crater bowl, floor and far wall
 
   // rocks: shared displaced icosahedra (no two identical), each tinted per instance from grey to dusty brown,
   // with a pitted, mottled rock texture — flat single-colour blobs read as painted balls
