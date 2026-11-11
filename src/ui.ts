@@ -17,7 +17,6 @@ const CSS = `
 #decision .opt{display:flex;gap:10px;padding:6px 8px;margin:4px 0;border:1px solid rgba(255,255,255,.18);cursor:pointer}#decision .opt:hover{border-color:#4fd8ff;background:rgba(79,216,255,.08)}#decision .opt b{color:#4fd8ff;font-weight:400}#decision .opt small{display:block;color:#8d98a6;font-size:11px}
 #decision .t{height:4px;background:rgba(255,255,255,.14);margin:8px 0}#decision .t i{display:block;height:100%;background:#ff5a5a;width:100%}#decision .ask{font-size:11px;color:#9aa6b4;min-height:18px}#decision .ask.rx{color:#7ee787}
 #result{position:fixed;top:11vh;left:50%;transform:translateX(-50%);width:min(560px,90vw);display:none;z-index:5;background:rgba(4,10,16,.92);border-left:3px solid #ffb000;padding:10px 14px;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#e8edf3}
-#dusthaze{position:fixed;inset:0;pointer-events:none;z-index:1;opacity:0;transition:opacity .7s ease;background:radial-gradient(ellipse 85% 80% at 50% 55%,rgba(168,142,104,.55),rgba(112,92,66,.9));mix-blend-mode:normal}
 #radfx{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;mix-blend-mode:screen}
 #banner{position:fixed;top:4vh;left:50%;transform:translateX(-50%);display:none;z-index:4;padding:8px 22px;font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.2em;color:#fff;background:rgba(160,20,20,.88);border:1px solid #ff8a7a;pointer-events:none}#banner.bad{animation:bn .8s steps(2) infinite}#banner.calm{background:rgba(30,60,90,.88);border-color:#4fd8ff;animation:none}@keyframes bn{50%{background:rgba(90,10,10,.88)}}
 #alerts{position:fixed;top:14px;right:16px;z-index:2;text-align:right;font:11px/1.7 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.1em;pointer-events:none}#alerts .warning{color:#ff5a5a}#alerts .caution{color:#ffb000}#alerts .info{color:#9aa6b4}
@@ -98,7 +97,6 @@ export class UI {
     this.card = document.createElement('div'); this.card.id = 'decision'; document.body.append(this.card);
     this.card.addEventListener('click', (e) => { const o = (e.target as HTMLElement).closest('[data-i]') as HTMLElement | null; if (o) h.dir.resolve(+o.dataset.i!); else if ((e.target as HTMLElement).closest('[data-ask]')) this.ask(); });
     this.res = document.createElement('div'); this.res.id = 'result'; document.body.append(this.res);
-    this.haze = document.createElement('div'); this.haze.id = 'dusthaze'; document.body.append(this.haze);
     this.radCv = document.createElement('canvas'); this.radCv.id = 'radfx'; document.body.append(this.radCv);
     this.alertsEl = document.createElement('div'); this.alertsEl.id = 'alerts'; document.body.append(this.alertsEl);
     this.end = document.createElement('div'); this.end.id = 'endscr'; document.body.append(this.end);
@@ -106,9 +104,7 @@ export class UI {
     h.dir.onResolve = (m) => { this.card.style.display = 'none'; this.lastEvent = null; this.res.textContent = m; this.res.style.display = 'block'; this.resT = 9; beep('ok'); };
   }
 
-  private haze!: HTMLElement; private radCv!: HTMLCanvasElement; private radT = 0;
-  /** dust haze over the view while you are outside in a storm (0..1) */
-  setHaze(k: number) { this.haze.style.opacity = String(Math.max(0, Math.min(1, k)).toFixed(2)); }
+  private radCv!: HTMLCanvasElement; private radT = 0;
   /** radiation hits: bright speckles flashing across the view, like the flashes astronauts see (0..1) */
   setRad(k: number, dt: number) {
     this.radT -= dt; if (this.radT > 0) return; this.radT = 0.09; const c = this.radCv; if (c.width !== innerWidth) { c.width = innerWidth; c.height = innerHeight; }

@@ -82,7 +82,7 @@ function fillWhite(g: THREE.BufferGeometry) {
 
 export class Hab {
   prompt = ''; toast = ''; suitHours = EVA_H; exposed = false; where = 'HAB';
-  lockdown = false; alarm = false; flicker = 0; lockHeld: boolean[] = [false, false]; private paneM!: THREE.MeshPhysicalMaterial; private shutterK = 0;
+  lockdown = false; alarm = false; flicker = 0; lockHeld: boolean[] = [false, false]; private paneM!: THREE.MeshPhysicalMaterial;
   curtains: THREE.Group[] = []; bags: THREE.Object3D[] = [];
   suitState: 'rack' | 'donning' | 'on' | 'doffing' = 'rack';
   taskLabel = ''; taskProgress = 0; onComms: (() => void) | null = null;
@@ -110,9 +110,9 @@ export class Hab {
     // ---- shell: painted panels outside (dielectric: paint is not metal), soft lining inside, gold MLI skirt, blue interior band ----
     const gap = Math.asin(0.8 / R), arc = P - 2 * gap, starts = [P / 2 + gap, (3 * P) / 2 + gap];
     const shellM = wornMat(0xffffff, 'paint', { rough: 0.55, metal: 0.03, repeat: 2, extra: { map: panelTexture('#f2f4f6', '#a9b1ba', 30, 2), side: THREE.FrontSide, vertexColors: true } });
-    const liningM = wornMat(0xffffff, 'paint', { rough: 0.8, metal: 0.02, repeat: 2, extra: { map: panelTexture('#e6e2db', '#b3aca2', 30, 2, 0), side: THREE.BackSide } });   // warm-grey interior, wiped down daily: zero grime
+    const liningM = wornMat(0xffffff, 'paint', { rough: 0.8, metal: 0.02, repeat: 2, extra: { map: panelTexture('#e6e2db', '#b3aca2', 30, 2), side: THREE.BackSide } });   // warm-grey interior, wiped down daily
     const domeM = wornMat(0xffffff, 'paint', { rough: 0.55, metal: 0.03, repeat: 2, extra: { map: panelTexture('#f2f4f6', '#a9b1ba', 28, 3), vertexColors: true } });
-    const ceilM = wornMat(0xffffff, 'paint', { rough: 0.85, metal: 0.02, repeat: 2, extra: { map: panelTexture('#e7e2da', '#b8b2a9', 28, 3, 0), side: THREE.BackSide } });
+    const ceilM = wornMat(0xffffff, 'paint', { rough: 0.85, metal: 0.02, repeat: 2, extra: { map: panelTexture('#e7e2da', '#b8b2a9', 28, 3), side: THREE.BackSide } });
     const foil = goldFoil(18, 1);
     const gold = new THREE.MeshStandardMaterial({ color: 0xffffff, map: foil.map, bumpMap: foil.bump, bumpScale: 1.8, metalness: 0.86, roughness: 0.38, roughnessMap: wearTextures('metal', 2).rough });   // real MLI: every crease catches its own light
     const bandM = wornMat(0x274066, 'fabric', { rough: 0.85, extra: { bumpMap: crinkleTexture(26, 1), bumpScale: 0.6, side: THREE.BackSide } });   // dusty-navy soft-goods band, not lacquered toy blue
@@ -519,13 +519,6 @@ export class Hab {
       if (d < bd) { best = i; bd = d; }
     }
     this.best = best; this.prompt = best ? best.text() + (best.alt ? '   ' + best.alt.text() : '') : this.held === 'extinguisher' ? '[F] DISCHARGE EXTINGUISHER' : '';
-  }
-
-  /** 0 = clear portholes, 1 = dust-caked and opaque, from both sides */
-  setShutters(k: number) {
-    if (Math.abs(k - this.shutterK) < 0.002) return; this.shutterK = k; const m = this.paneM;
-    m.opacity = 0.07 + 0.93 * k; m.color.setRGB(1 - 0.5 * k, 1 - 0.56 * k, 1 - 0.65 * k); m.roughness = 0.03 + 0.9 * k; m.depthWrite = k > 0.6;
-    const side = k > 0.01 ? THREE.DoubleSide : THREE.FrontSide; if (m.side !== side) { m.side = side; m.needsUpdate = true; }
   }
 
   private stepSuit(dt: number, sim: Sim) {
