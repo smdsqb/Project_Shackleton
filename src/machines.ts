@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { wornMat } from './livery';
 
 // Life-support hardware, each unit shaped after the real thing: an ISS-style 2 m rack with an electrolysis cell stack
 // (oxygen), a gas manifold with regulators and bottles (atmosphere), filtration beds, waste tank and pump skid (water),
@@ -7,7 +8,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 const P = Math.PI;
 type V = [number, number, number];
 const rb = (w: number, h: number, d: number, r = 0.03) => new RoundedBoxGeometry(w, h, d, 3, Math.max(0.002, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001)));
-const M = (c: number, rough = 0.5, metal = 0.2) => new THREE.MeshStandardMaterial({ color: c, roughness: rough, metalness: metal });
+const M = (c: number, rough = 0.5, metal = 0.2) => wornMat(c, metal >= 0.45 ? 'metal' : 'paint', { rough, metal: metal >= 0.45 ? metal : 0.04, repeat: 2 });
 const G = (c: number, k = 1.3) => new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: k, roughness: 0.4 });
 const glass = (o = 0.1, c = 0xcfe9ff) => new THREE.MeshPhysicalMaterial({ color: c, roughness: 0.03, transparent: true, opacity: o, depthWrite: false });
 export const COL = { steel: 0xb4bac2, white: 0xe9edf1, dark: 0x262b32, black: 0x14171b, orange: 0xe8832a, green: 0x2f9d58, blue: 0x2f6fd0, red: 0xc0392b, gold: 0xc8a035, grey: 0x8b929c };

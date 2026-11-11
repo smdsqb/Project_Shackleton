@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { NASA, meatball, flagTexture } from './livery';
+import { NASA, meatball, flagTexture, wornMat } from './livery';
 
 const P = Math.PI;
 const rb = (w: number, h: number, d: number, r = 0.02) => new RoundedBoxGeometry(w, h, d, 3, Math.max(0.002, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001)));
@@ -14,9 +14,12 @@ export type SuitParts = { legL: THREE.Group; legR: THREE.Group; armL: THREE.Grou
  */
 export function buildSuit(opts: { suited: boolean; shadowOnly?: boolean }): THREE.Group {
   const { suited, shadowOnly } = opts;
-  const m = (c: number, rough = 0.7, metal = 0.03) => new THREE.MeshStandardMaterial({ color: c, roughness: rough, metalness: metal });
-  const fabric = m(suited ? 0xf0f1f3 : NASA.blue, 0.85), hard = m(0xe8ebee, 0.35, 0.15), joint = m(0x9aa1ab, 0.8, 0.1), dark = m(0x23272d, 0.5, 0.3);
-  const glove = m(suited ? 0xd5d9de : 0xb98563, 0.85), boot = m(0x3b4048, 0.8), red = m(NASA.red, 0.6), skin = m(0xb98563, 0.8);
+  const m = (c: number, rough = 0.7, metal = 0.03) => wornMat(c, rough >= 0.75 ? 'fabric' : 'paint', { rough, metal: 0.03, repeat: 1 });
+  // no two suits age the same: each one picks up a different amount of regolith grey (EVA suits famously
+  // turn dingy grey-brown after a few sorties; only a fresh one is white)
+  const dusty = (c: number) => new THREE.Color(c).lerp(new THREE.Color(0x8f887c), suited ? 0.18 + Math.random() * 0.26 : 0.04 + Math.random() * 0.08);
+  const fabric = m(dusty(suited ? 0xd9d7d2 : NASA.blue).getHex(), 0.85), hard = m(dusty(0xd8d9db).getHex(), 0.5, 0.05), joint = m(dusty(0x8d939b).getHex(), 0.8, 0.05), dark = m(0x23272d, 0.6, 0.1);
+  const glove = m(dusty(suited ? 0xc9ccce : 0xb98563).getHex(), 0.85), boot = m(0x3b4048, 0.85), red = m(0xc8452c, 0.65), skin = m(0xb98563, 0.8);
   const root = new THREE.Group();
   const mesh = (g: THREE.BufferGeometry, mat: THREE.Material, parent: THREE.Object3D, x = 0, y = 0, z = 0) => { const o = new THREE.Mesh(g, mat); o.position.set(x, y, z); parent.add(o); return o; };
   const ring = (r: number, t: number) => new THREE.TorusGeometry(r, t, 8, 22).rotateX(P / 2);
@@ -45,7 +48,8 @@ export function buildSuit(opts: { suited: boolean; shadowOnly?: boolean }): THRE
     mesh(ring(0.1, 0.025), joint, root, 0, 1.6, 0);
     mesh(new THREE.SphereGeometry(0.1, 16, 12), skin, root, 0, 1.74, 0);
     mesh(new THREE.SphereGeometry(0.17, 28, 20), new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.02, transparent: true, opacity: 0.13, depthWrite: false }), root, 0, 1.75, 0);
-    mesh(new THREE.SphereGeometry(0.176, 32, 20, (3 * P) / 2 - 1.0, 2.0, 0.55, 1.75), new THREE.MeshStandardMaterial({ color: 0xc79a3c, roughness: 0.12, metalness: 0.55, transparent: true, opacity: 0.93, side: THREE.DoubleSide }), root, 0, 1.75, 0);
+    // gold sun-visor: a coated reflective shell that picks up the environment, with faint arc scratches
+    mesh(new THREE.SphereGeometry(0.176, 32, 20, (3 * P) / 2 - 1.0, 2.0, 0.55, 1.75), new THREE.MeshPhysicalMaterial({ color: 0xc79a3c, roughness: 0.18, metalness: 0.9, transparent: true, opacity: 0.94, side: THREE.DoubleSide, clearcoat: 0.6, clearcoatRoughness: 0.25 }), root, 0, 1.75, 0);
     mesh(ring(0.14, 0.02), hard, root, 0, 1.63, 0);
     mesh(rb(0.4, 0.56, 0.2, 0.06), hard, root, 0, 1.34, 0.2); mesh(rb(0.3, 0.1, 0.12, 0.03), joint, root, 0, 1.02, 0.2);
     mesh(cap(0.02, 0.12), dark, root, 0.14, 1.68, 0.22);

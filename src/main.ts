@@ -25,9 +25,9 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;   // the sun is a point source in vacuum: shadows are hard-edged, not soft studio blobs
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.32;
+renderer.toneMappingExposure = 1.36;
 document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -61,15 +61,15 @@ const scene = new THREE.Scene();
   );
   earthGlow.position.set(-55, 18, -30); env.add(earthGlow);
   scene.environment = new THREE.PMREMGenerator(renderer).fromScene(env, 0.04).texture;
-  scene.environmentIntensity = 0.5; // reflections without turning the night sky milky
+  scene.environmentIntensity = 0.4; // reflections without washing the shadow sides milky
 }
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 30000);
 camera.position.set(-1.5, heightAt(0, 0) + EYE, 0.5);
 scene.add(camera);
-const amb = new THREE.AmbientLight(0x39485c, 0.35); // earthshine and regolith bounce; dropped inside the hab so interior light is not flat
+const amb = new THREE.AmbientLight(0x39485c, 0.19); // earthshine and regolith bounce only: shadow sides stay deep, not milky
 scene.add(amb);
-let ambK = 0.35;
-const sun = new THREE.DirectionalLight(0xfff4e6, 3.2);
+let ambK = 0.19;
+const sun = new THREE.DirectionalLight(0xfff4e6, 4.0);
 sun.castShadow = true;
 sun.shadow.mapSize.set(4096, 4096);
 Object.assign(sun.shadow.camera, { left: -150, right: 150, top: 150, bottom: -150, near: 1, far: 1400 });
@@ -85,7 +85,15 @@ const earth = new THREE.Mesh(new THREE.SphereGeometry(36.5, 48, 48), new THREE.M
 scene.add(sunDisc, earth);
 const starPos = new Float32Array(4000 * 3);
 for (let i = 0; i < 4000; i++) { const v = new THREE.Vector3().randomDirection().multiplyScalar(20000); starPos.set([v.x, Math.abs(v.y), v.z], i * 3); }
-scene.add(new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(starPos, 3)), new THREE.PointsMaterial({ color: 0xffffff, size: 1.8, sizeAttenuation: false })));
+{   // three magnitude classes: the real sky is a handful of bright points over a faint dust of dim ones
+  const starGeo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+  const mk = (n: number, size: number, opacity: number) => {
+    const g = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(starPos.subarray(0, n * 3), 3));
+    scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size, sizeAttenuation: false, transparent: true, opacity, depthWrite: false })));
+  };
+  void starGeo;
+  mk(120, 2.6, 0.95); mk(900, 1.8, 0.75); mk(4000, 1.1, 0.45);
+}
 
 const arrayPos = new THREE.Vector3(14, heightAt(14, 6) + 12, 6);
 
@@ -124,9 +132,42 @@ function buildWorld() {
   patch(700, 600, 0, new THREE.MeshStandardMaterial({ color: 0x9a968f, map: tex, bumpMap: tex, bumpScale: 3, roughness: 1 }));
   patch(10240, 320, -0.6, new THREE.MeshStandardMaterial({ color: 0x4f4c48, roughness: 1 }), 340);   // the whole 10 km tile
 
-  const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshStandardMaterial({ color: 0x5b5853, roughness: 1 }), ROCK_CAP);
-  const d = new THREE.Object3D(); let n = 0;
-  for (const r of buildRocks()) { d.position.set(r.x, r.y, r.z); d.rotation.set(r.rx, r.ry, 0); d.scale.set(r.s, r.sy, r.sz); d.updateMatrix(); rocks.setMatrixAt(n++, d.matrix); }
+  // rocks: shared displaced icosahedra (no two identical), each tinted per instance from grey to dusty brown,
+  // with a pitted, mottled rock texture — flat single-colour blobs read as painted balls
+  const rockGeo = new THREE.IcosahedronGeometry(1, 1);
+  {
+    const p = rockGeo.attributes.position, v = new THREE.Vector3(), seen = new Map<string, number>();
+    for (let i = 0; i < p.count; i++) {
+      v.set(p.getX(i), p.getY(i), p.getZ(i));
+      const k = `${v.x.toFixed(4)},${v.y.toFixed(4)},${v.z.toFixed(4)}`;
+      let j = seen.get(k);
+      if (j === undefined) { j = 0.82 + Math.random() * 0.36; seen.set(k, j); }   // same jitter for shared corners so faces stay welded
+      v.multiplyScalar(j); p.setXYZ(i, v.x, v.y, v.z);
+    }
+    rockGeo.computeVertexNormals();
+  }
+  const rockTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d')!;
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 256, 256);
+    for (const [s, a] of [[4, 0.25], [16, 0.2], [64, 0.12]] as const) {
+      const n = document.createElement('canvas'); n.width = n.height = s;
+      const ng = n.getContext('2d')!, id = ng.createImageData(s, s);
+      for (let i = 0; i < s * s; i++) { const v = 110 + Math.random() * 130; id.data.set([v, v * 0.985, v * 0.94, 255], i * 4); }
+      ng.putImageData(id, 0, 0); g.globalAlpha = a; g.drawImage(n, 0, 0, 256, 256);
+    }
+    g.globalAlpha = 1;
+    for (let i = 0; i < 500; i++) { g.fillStyle = `rgba(70,66,60,${0.15 + Math.random() * 0.3})`; g.beginPath(); g.arc(Math.random() * 256, Math.random() * 256, 0.5 + Math.random() * 2.5, 0, 7); g.fill(); }
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
+  })();
+  const rocks = new THREE.InstancedMesh(rockGeo, new THREE.MeshStandardMaterial({ map: rockTex, roughness: 1, metalness: 0 }), ROCK_CAP);
+  const d = new THREE.Object3D(), rc = new THREE.Color(); let n = 0;
+  for (const r of buildRocks()) {
+    d.position.set(r.x, r.y, r.z); d.rotation.set(r.rx, r.ry, 0); d.scale.set(r.s, r.sy, r.sz); d.updateMatrix();
+    rocks.setMatrixAt(n, d.matrix);
+    rc.setHSL(0.08 + Math.random() * 0.04, 0.04 + Math.random() * 0.09, 0.3 + Math.random() * 0.16);   // grey to dusty brown, never the same twice
+    rocks.setColorAt(n, rc);
+    n++;
+  }
   rocks.count = n; rocks.castShadow = rocks.receiveShadow = true; scene.add(rocks);
 
   const gy = heightAt(0, 0);
@@ -314,7 +355,7 @@ function frame() {
   const date = new Date(simMs), s = bodyDir('sun', date), e = bodyDir('earth', date);
   sunLive = s.live; sd.set(s.x, s.y, s.z); earthDir.set(e.x, e.y, e.z); earthEl = e.el;
   const inRover = !!rover && rover.inside, inside = (hab ? hab.inHab(camera.position.x, camera.position.z) : false) || inRover;
-  ambK += ((inside ? 0.1 : 0.35) - ambK) * Math.min(1, dt * 3); amb.intensity = ambK;
+  ambK += ((inside ? 0.1 : 0.19) - ambK) * Math.min(1, dt * 3); amb.intensity = ambK;
   storm.update(dt, camera.position, sim.lockdown?.storm ?? (sim.stormWarn ? 0.45 : 0), !inside);
   ui.setHaze(storm.level * (inside ? 0 : 0.78));
   fx.update(running ? dt : 0, camera.position, sim); hab && (hab.flicker = Math.min(1, fx.shake * 1.1));

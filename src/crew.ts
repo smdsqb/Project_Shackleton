@@ -6,7 +6,7 @@
 // blinking, eye saccades, breathing, glances at the player, a lunar-gravity lope on EVA, and airlock transits.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { meatball, flagTexture, plateTexture } from './livery';
+import { meatball, flagTexture, plateTexture, wornMat } from './livery';
 import { HAB_R, WASH_CIRCLES } from './hab';
 import { propCircles } from './exterior';
 
@@ -122,7 +122,7 @@ function build(s: Spec): Rig {
   const L = { thigh: 0.245 * H, shin: 0.246 * H, ankle: 0.039 * H, ua: 0.186 * H, fa: 0.146 * H };
   const root = new THREE.Group(), pv = new THREE.Group(); root.add(pv);
   const ind: THREE.Object3D[] = [], eva: THREE.Object3D[] = [], skinEx: THREE.Object3D[] = [];
-  const std = (color: number, rough = 0.7, metal = 0, extra: THREE.MeshStandardMaterialParameters = {}) => new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal, ...extra });
+  const std = (color: number, rough = 0.7, metal = 0, extra: THREE.MeshStandardMaterialParameters = {}) => wornMat(color, rough >= 0.85 ? 'fabric' : 'paint', { rough, metal, repeat: 1, extra });
   const skinM = std(s.skin, 0.62, 0, { emissive: s.skin, emissiveIntensity: 0.05 });
   const headM = new THREE.MeshStandardMaterial({ map: skinTexture(s.skin, s.hair, s.stubble, f), roughness: 0.6, emissive: s.skin, emissiveIntensity: 0.03 });
   const poloM = std(0x14357a, 0.92), pantsM = std(s.pants, 0.95), shoeM = std(0x1f2328, 0.7), white = std(0xf1f3f5, 0.5, 0.08), grey = std(0x8e96a1, 0.6, 0.2), stripeM = std(s.stripe, 0.6);
