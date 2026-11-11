@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { meatball, flagTexture, plateTexture } from './livery';
-import { HAB_R } from './hab';
+import { HAB_R, WASH_CIRCLES } from './hab';
 import { propCircles } from './exterior';
 
 type Pose = Record<string, number>;
@@ -267,7 +267,7 @@ const win = (anim: string, d: [number, number]): Stop => { const a = pick([1.22,
 const PROPS = propCircles; // live list shared with the exterior
 let extraObstacles: () => { x: number; z: number; r: number }[] = () => [];
 export const setCrewObstacles = (f: () => { x: number; z: number; r: number }[]) => { extraObstacles = f; };
-const ROOM = [{ x: -2.6, z: -2.08, r: 0.75 }, { x: 0, z: -2.08, r: 0.75 }, { x: 2.6, z: -2.08, r: 0.75 }, { x: 0, z: 2.47, r: 1.25 }];
+const ROOM = [{ x: -2.6, z: -2.08, r: 0.75 }, { x: 0, z: -2.08, r: 0.75 }, { x: 2.6, z: -2.08, r: 0.75 }, { x: 0, z: 2.47, r: 1.25 }, ...WASH_CIRCLES];
 const farPoint = () => { for (let i = 0; i < 40; i++) { const a = rnd(0, TAU), r = rnd(17, 44), p = pol(r, a); if (PROPS.concat(extraObstacles()).every((c) => hypot(p.x - c.x, p.z - c.z) > c.r + 2)) return p; } return pol(30, 1); };
 const evaStops = (anim: string, n: number, d: [number, number]): Stop[] => Array.from({ length: n }, () => ({ ...farPoint(), yaw: rnd(0, TAU), anim, dwell: rnd(d[0], d[1]), eva: true }));
 const TASKS: TaskDef[] = [
@@ -344,7 +344,7 @@ class Bot {
     }
     if (n.wait) this.waitLeft = n.wait;
   }
-  private circles() { return this.eva ? PROPS.concat(extraObstacles(), [{ x: 0, z: 0, r: HAB_R + 1.3 }]) : ROOM; }
+  private circles() { return this.eva ? PROPS.concat(extraObstacles(), [{ x: 0, z: 0, r: HAB_R + 1.3 }], WASH_CIRCLES) : ROOM; }
 
   update(dt: number, cam: THREE.Vector3) {
     this.t += dt; const T = this.t * this.spec.tempo + this.ph0, r = this.rig;

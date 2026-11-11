@@ -87,7 +87,7 @@ function patch(size: number, segs: number, yOff: number, mat: THREE.Material, ho
 function buildWorld() {
   const tex = regolithTexture();
   patch(700, 600, 0, new THREE.MeshStandardMaterial({ color: 0x9a968f, map: tex, bumpMap: tex, bumpScale: 3, roughness: 1 }));
-  patch(8000, 200, -0.6, new THREE.MeshStandardMaterial({ color: 0x4f4c48, roughness: 1 }), 340);
+  patch(10240, 320, -0.6, new THREE.MeshStandardMaterial({ color: 0x4f4c48, roughness: 1 }), 340);   // the whole 10 km tile
 
   const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshStandardMaterial({ color: 0x5b5853, roughness: 1 }), ROCK_CAP);
   const d = new THREE.Object3D(); let n = 0;
@@ -174,6 +174,7 @@ addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (!locked) return;
   if (e.code === 'KeyE') { if (rover?.hasPrompt) rover.press(); else hab?.press(); }
+  if (e.code === 'KeyF' && locked && !e.repeat) hab?.press2();
   else if (e.code === 'KeyL' && rover?.inside) rover.toggleLights();
   else if (e.code === 'KeyX' && rover?.mode === 'driving') rover.toggleParkBrake();
   else if (e.code === 'KeyR' && rover?.mode === 'driving') rover.onRadio?.();
@@ -203,6 +204,7 @@ function drawHud(az: number, el: number) {
     row('SIM CLOCK', new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC') + row('MISSION DAY', `${day} · ${(sim.t / 24).toFixed(1)} / ${SIM.missionDays}`) +
     row('SUN EL / AZ', `${(el * 57.2958).toFixed(2)}° / ${(az * 57.2958).toFixed(0)}°`) +
     row('SUN DATA', sunLive ? 'JPL HORIZONS' : 'APPROXIMATE', sunLive ? 'ok' : 'warn') +
+    (getSite()?.craterDir ? row('CRATER INTERIOR', (() => { const c = getSite()!.craterDir!, b = ((Math.atan2(c.x, -c.z) * 180) / Math.PI + 360) % 360; return `${['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(b / 45) % 8]} ${b.toFixed(0)}°  ·  RIM CREST AT THE PAD`; })()) : '') +
     row('ARRAY', sim.sunlit ? 'SUNLIT' : 'SHADOW', sim.sunlit ? 'ok' : 'bad') +
     row('POWER GEN / LOAD', `${sim.genKw.toFixed(1)} / ${sim.loadKw.toFixed(1)} kW`, cls(sim.genKw < sim.loadKw)) +
     row('BATTERY', `${b.toFixed(1)} %`, cls(b < 25, b < 10)) +
@@ -287,6 +289,7 @@ function frame() {
     if (sh > 0.001) { camera.rotateX(Math.sin(t * 41) * 0.012 * sh + Math.sin(t * 17.3) * 0.01 * sh); camera.rotateZ(Math.sin(t * 29) * 0.014 * sh); camera.position.y += Math.sin(t * 53) * 0.025 * sh; }
   }
   lamp.visible = !!hab && hab.exposed && hab.suitOn;
+  player.setHeld(hab?.held ?? null); player.setSpray(!!hab?.spraying);
   player.update(dt, camera.position, yaw, vel, onGround, !!hab?.suitOn, comms.padOpen, !!hab?.exposed);
 
   sun.position.copy(camera.position).addScaledVector(sd, 600);

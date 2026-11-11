@@ -78,3 +78,11 @@ with PLSS, gold visor and stripes outside) and runs a duty scheduler:
 - task pools per role: stargaze / photo / journal / coffee / stretch; software update / radio check / rack check / lab; moonwalk / sample collection / panel dusting / equipment inspection
 - airlock transits (outbound lock 1, inbound lock 2) with suit-up swap; natural gait, lunar lope on EVA, blinking, saccades, breathing, glances at the player
 - bots do not interact with each other or the player yet; each task owns its own spot
+
+## Using the Hab
+
+E uses what you are facing, F is its second action. Examples: wardrobe (E open or close, F change clothes), medical cabinet (F check crew vitals), first-aid kit (F treat a minor injury), fire extinguisher (E take or return, F discharge), the four life-support racks (E reads live status), lab benches, galley, bunks, and the hygiene compartment (E door, shower, waste collector, basin). Timed actions block movement while they run, and some cost a little power.
+
+## Terrain
+
+The baked LOLA tile is a rotated square inside a square array, so about half of the array is no-data zeros. They are filled with the nearest real height at load (`fillNoData` in `src/terrain.ts`), which removed fake cliffs up to 2 km tall near the tile edges.
