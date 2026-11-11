@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { wornMat } from './livery';
 
 // Crew furnishings that open and close: wardrobe, medical cabinet, first-aid kit, and the hygiene compartment.
 // Local frame (same as the machines): floor y = 0, front toward -x, wall behind at +x, width along z.
 const P = Math.PI;
 export type Hinge = { pivot: THREE.Object3D; axis: 'x' | 'y' | 'z'; open: number };
 const rb = (w: number, h: number, d: number, r = 0.015) => new RoundedBoxGeometry(w, h, d, 3, Math.max(0.002, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001)));
-const M = (c: number, rough = 0.6, metal = 0.05) => new THREE.MeshStandardMaterial({ color: c, roughness: rough, metalness: metal });
+const M = (c: number, rough = 0.6, metal = 0.05) => wornMat(c, metal >= 0.45 ? 'metal' : rough >= 0.85 ? 'fabric' : 'plastic', { rough, metal: metal >= 0.45 ? metal : 0.03, repeat: 1 });
 const glassM = (o = 0.14, c = 0xdfeaf3) => new THREE.MeshPhysicalMaterial({ color: c, roughness: 0.05, transparent: true, opacity: o, depthWrite: false, side: THREE.DoubleSide });
 
 class B {

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { NASA, panelTexture, tileTexture, crinkleTexture, meatball, worm, plateTexture, flagTexture } from './livery';
+import { NASA, panelTexture, tileTexture, meatball, worm, plateTexture, flagTexture, groundDustTexture, wornMat, goldFoil, wearTextures, dustGradient } from './livery';
 
 // Pressurised Lunar Terrain Vehicle, modelled on the white faceted pressurised rover in the reference images:
 // six big balloon tyres with yellow hubs on independent tubular suspension, a faceted two-seat cab with a
@@ -22,7 +22,10 @@ const tex = (c: HTMLCanvasElement, rx = 1, ry = 1, srgb = true) => {
   t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; return t;
 };
 const rbox = (w: number, h: number, d: number, r = 0.04) => new RoundedBoxGeometry(w, h, d, 3, Math.max(0.002, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001)));
-const std = (c: number, rough = 0.5, metal = 0.2, extra: THREE.MeshStandardMaterialParameters = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: rough, metalness: metal, ...extra });
+// every surface goes through the wear system: painted panels are dielectric (metalness ~0) with patchy roughness,
+// scuffs and grime; only genuinely bare metal keeps metalness. A uniform sheen is what made it read as a toy.
+const std = (c: number, rough = 0.5, metal = 0.2, extra: THREE.MeshStandardMaterialParameters = {}) =>
+  wornMat(c, metal >= 0.45 ? 'metal' : 'paint', { rough, metal: metal >= 0.45 ? metal : 0.04, repeat: 2, extra });
 const glowMat = (c: number, k = 1.4) => new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: k, roughness: 0.4 });
 function mk(parent: THREE.Object3D, g: THREE.BufferGeometry, m: THREE.Material, x = 0, y = 0, z = 0, shadow = true) {
   const o = new THREE.Mesh(g, m); o.position.set(x, y, z); o.castShadow = shadow; o.receiveShadow = true; parent.add(o); return o;
@@ -52,17 +55,21 @@ function treadTex() {
 }
 function hubTex() {
   const c = cv(512, 512), g = c.getContext('2d')!;
-  g.fillStyle = '#e4b21c'; g.fillRect(0, 0, 512, 512);
+  g.fillStyle = '#b9902a'; g.fillRect(0, 0, 512, 512);   // mustard industrial enamel, not glossy taxi yellow
   g.fillStyle = '#3a3320'; g.beginPath(); g.arc(256, 256, 252, 0, 7); g.arc(256, 256, 236, 0, 7, true); g.fill();
   g.strokeStyle = '#8a6a10'; g.lineWidth = 6;
   for (let i = 0; i < 12; i++) { const a = (i / 12) * Math.PI * 2; g.beginPath(); g.moveTo(256 + Math.cos(a) * 90, 256 + Math.sin(a) * 90); g.lineTo(256 + Math.cos(a) * 225, 256 + Math.sin(a) * 225); g.stroke(); }
   g.fillStyle = '#4b3f14';
   for (let i = 0; i < 12; i++) { const a = ((i + 0.5) / 12) * Math.PI * 2; g.beginPath(); g.ellipse(256 + Math.cos(a) * 160, 256 + Math.sin(a) * 160, 36, 17, a, 0, 7); g.fill(); }
   g.strokeStyle = '#8a6a10'; g.beginPath(); g.arc(256, 256, 95, 0, 7); g.stroke(); g.beginPath(); g.arc(256, 256, 228, 0, 7); g.stroke();
+  // tonal fade: paint chalks and shadows unevenly across the face
+  const fade = g.createRadialGradient(256, 200, 40, 256, 256, 250);
+  fade.addColorStop(0, 'rgba(255,244,200,0.10)'); fade.addColorStop(0.7, 'rgba(60,55,40,0)'); fade.addColorStop(1, 'rgba(40,36,28,0.22)');
+  g.fillStyle = fade; g.fillRect(0, 0, 512, 512);
   // dust flung radially across the face between the bolts and the rim
-  g.strokeStyle = 'rgba(138,131,120,0.3)'; g.lineWidth = 3;
+  g.strokeStyle = 'rgba(138,131,120,0.35)'; g.lineWidth = 3;
   for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2 + 0.11; g.beginPath(); g.moveTo(256 + Math.cos(a) * 96, 256 + Math.sin(a) * 96); g.lineTo(256 + Math.cos(a) * 222, 256 + Math.sin(a) * 222); g.stroke(); }
-  for (let i = 0; i < 260; i++) { g.fillStyle = `rgba(126,120,109,${0.1 + Math.random() * 0.3})`; g.fillRect(Math.random() * 508, Math.random() * 508, 2 + Math.random() * 3, 1 + Math.random() * 2); }
+  for (let i = 0; i < 320; i++) { g.fillStyle = `rgba(126,120,109,${0.12 + Math.random() * 0.34})`; g.fillRect(Math.random() * 508, Math.random() * 508, 2 + Math.random() * 3, 1 + Math.random() * 2); }
   return tex(c, 1, 1);
 }
 function hazardTex() {
@@ -137,8 +144,8 @@ function polyGeom(pts: THREE.Vector3[], holes: THREE.Vector3[][], b: Basis) {
     // regolith dust: heavy up to about 1.2 m, fading out by 3.1 m, with a per-vertex mottle so it is never a flat wash.
     // the tint is warm grey (r > g > b) like real lunar dust, never the clean darker-white a shadow would give.
     const hv = Math.sin(tmp.x * 12.9898 + tmp.y * 78.233 + tmp.z * 37.719) * 43758.5453, n = hv - Math.floor(hv);
-    const f = Math.min(1, Math.max(0, (3.1 - tmp.y) / 1.9)) * (0.62 + 0.38 * n);
-    const k = 1 - 0.5 * f;
+    const f = Math.min(1, Math.max(0, (3.4 - tmp.y) / 2.1)) * (0.62 + 0.38 * n);
+    const k = 1 - 0.58 * f;
     col.push(k, k * (1 - 0.045 * f), k * (1 - 0.12 * f));
   }
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); return g;
@@ -188,12 +195,13 @@ export type RoverModel = ReturnType<typeof buildRoverModel>;
 export function buildRoverModel() {
   const root = new THREE.Group(), chassis = new THREE.Group(); root.add(chassis);
   const panelMap = () => panelTexture('#f3f3f1', '#b4b8bb', 1, 1);
-  const body = std(0xffffff, 0.42, 0.22, { map: panelMap(), side: THREE.DoubleSide, vertexColors: true });
-  const white = std(0xf1f2f0, 0.42, 0.22, { map: panelMap() });
-  const bodyPlain = std(0xe9eae7, 0.46, 0.2, { map: panelMap(), side: THREE.DoubleSide });   // pre-dusted white: never showroom-clean
-  const grey = std(NASA.grey, 0.45, 0.45), steel = std(0xb9bfc8, 0.35, 0.65), dark = std(0x23272d, 0.7, 0.35);
-  const gold = std(NASA.gold, 0.32, 0.85, { bumpMap: crinkleTexture(3, 3), bumpScale: 2 }), copper = std(0xb87333, 0.35, 0.85), brass = std(0xc9a24a, 0.35, 0.8);
-  const yellow = std(0xe8b923, 0.5, 0.2), red = std(NASA.red, 0.5, 0.2), blue = std(NASA.blue, 0.5, 0.2), hazard = std(0xffffff, 0.6, 0.1, { map: hazardTex() });
+  const body = std(0xffffff, 0.55, 0.05, { map: panelMap(), side: THREE.DoubleSide, vertexColors: true });
+  const white = std(0xf1f2f0, 0.55, 0.05, { map: panelMap() });
+  const bodyPlain = std(0xe9eae7, 0.6, 0.04, { map: panelMap(), side: THREE.DoubleSide, vertexColors: true });   // pre-dusted white: never showroom-clean
+  const grey = std(NASA.grey, 0.55, 0.4), steel = std(0xb9bfc8, 0.5, 0.6), dark = std(0x23272d, 0.72, 0.3);
+  const foil = goldFoil(3, 3);
+  const gold = new THREE.MeshStandardMaterial({ color: 0xffffff, map: foil.map, bumpMap: foil.bump, bumpScale: 1.5, metalness: 0.85, roughness: 0.4, roughnessMap: wearTextures('metal', 2).rough }), copper = std(0xb87333, 0.45, 0.8), brass = std(0xc9a24a, 0.45, 0.75);
+  const yellow = std(0xcfa22d, 0.6, 0.1), red = std(0xc8452c, 0.6, 0.08), blue = std(0x2a4a8c, 0.6, 0.08), hazard = std(0xd8c49a, 0.7, 0.05, { map: hazardTex() });
   const lampOn = glowMat(0xfff4dc, 1.8), amber = glowMat(0xffa31a, 1.5), taillamp = glowMat(0xff2a1a, 1.3);
   const dyn = <T extends THREE.Object3D>(o: T) => { o.userData.dyn = true; return o; };
   const dynGroup = (g: THREE.Group) => { g.userData.dynGroup = true; return g; };
@@ -212,19 +220,30 @@ export function buildRoverModel() {
   }
 
   // ---- six wheels on independent tubular suspension ----
-  const tireM = std(0xd9d5cc, 0.92, 0, { map: treadTex(), bumpMap: treadTex(), bumpScale: 1.6 });   // dusty pale rubber, not showroom white
+  const tireM = std(0xc6c1b6, 0.92, 0, { map: treadTex(), bumpMap: treadTex(), bumpScale: 1.6 });   // dusty pale rubber, not showroom white
   const prof = [[0.56, -0.36], [0.64, -0.41], [0.74, -0.43], [0.83, -0.38], [0.88, -0.3], [0.9, -0.2], [0.9, 0.2], [0.88, 0.3], [0.83, 0.38], [0.74, 0.43], [0.64, 0.41], [0.56, 0.36]].map(([r, y]) => new THREE.Vector2(r, y));
-  const tireG = new THREE.LatheGeometry(prof, 80).rotateX(Math.PI / 2), hubM = std(0xffffff, 0.45, 0.3, { map: hubTex() });
-  const coilM = std(0xffffff, 0.5, 0.3, { map: coilTex() });
+  const tireG = new THREE.LatheGeometry(prof, 80).rotateX(Math.PI / 2), hubM = std(0xffffff, 0.55, 0.05, { map: hubTex() });
+  const coilM = std(0xd8d4c8, 0.6, 0.05, { map: coilTex() });
   const FEND_R = 1.15, names = ['FRONT PORT WHEEL', 'FRONT STARBOARD WHEEL', 'MID PORT WHEEL', 'MID STARBOARD WHEEL', 'REAR PORT WHEEL', 'REAR STARBOARD WHEEL'];
   const wheels: Wheel[] = [];
   for (const ax of AXLES) for (const side of [-1, 1]) {
     const front = ax === AXLES[0], hub = dynGroup(new THREE.Group()); hub.position.set(ax, WHEEL_R, side * TRACK); chassis.add(hub);
     const steer = new THREE.Group(), spin = new THREE.Group(); hub.add(steer); steer.add(spin);
     mk(spin, tireG, tireM);
+    // geometric chevron lugs around the circumference: a smooth torus with a tread *texture* still reads as a
+    // road tyre at gameplay distance; 20 angled blocks per wheel read as an off-road tyre from any angle
+    {
+      const lugM = std(0x3a3733, 0.95, 0);
+      const lugG = rbox(0.14, 0.1, 0.64, 0.03);
+      for (let i = 0; i < 20; i++) {
+        const a = (i / 20) * Math.PI * 2;
+        const lug = mk(spin, lugG, lugM, Math.cos(a) * 0.84, Math.sin(a) * 0.84, 0, false);
+        lug.rotation.z = a + (i % 2 ? 0.22 : -0.22);
+      }
+    }
     const face = new THREE.CylinderGeometry(0.58, 0.58, 0.06, 64).rotateX(Math.PI / 2);
     mk(spin, face, hubM, 0, 0, side * 0.36); mk(spin, face, hubM, 0, 0, -side * 0.36);
-    for (const zz of [0.38, -0.38]) { const lip = mk(spin, new THREE.TorusGeometry(0.58, 0.04, 10, 56), gold, 0, 0, zz); lip.castShadow = false; }
+    for (const zz of [0.38, -0.38]) { const lip = mk(spin, new THREE.TorusGeometry(0.58, 0.04, 10, 56), std(0x43464a, 0.85, 0.15), 0, 0, zz); lip.castShadow = false; }   // bead ring: dusty composite, not polished gold
     mk(spin, new THREE.CylinderGeometry(0.2, 0.23, 0.12, 28).rotateX(Math.PI / 2), grey, 0, 0, side * 0.42);
     mk(spin, new THREE.SphereGeometry(0.1, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(Math.PI / 2 * side), steel, 0, 0, side * 0.46);
     for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; mk(spin, new THREE.CylinderGeometry(0.03, 0.03, 0.05, 8).rotateX(Math.PI / 2), steel, Math.cos(a) * 0.31, Math.sin(a) * 0.31, side * 0.4, false); }
@@ -232,8 +251,8 @@ export function buildRoverModel() {
     dyn(mk(spin, new THREE.CylinderGeometry(0.42, 0.42, 0.035, 48).rotateX(Math.PI / 2), rotorM, 0, 0, -side * 0.22, false));
     mk(hub, new THREE.CylinderGeometry(0.17, 0.17, 0.36, 24).rotateX(Math.PI / 2), dark, 0, 0, -side * 0.5);
     mk(hub, rbox(0.14, 0.26, 0.1, 0.05), red, 0.38, 0.1, -side * 0.24);
-    // fender: big half-round arch, rolled lips, a rounded inner liner
-    mk(chassis, new THREE.CylinderGeometry(FEND_R, FEND_R, WHEEL_W + 0.3, 48, 1, true, Math.PI / 2, Math.PI).rotateX(Math.PI / 2), bodyPlain, ax, WHEEL_R + 0.12, side * TRACK);
+    // fender: big half-round arch, rolled lips, a rounded inner liner — dust settles along its lower edge
+    mk(chassis, dustGradient(new THREE.CylinderGeometry(FEND_R, FEND_R, WHEEL_W + 0.3, 48, 4, true, Math.PI / 2, Math.PI).rotateX(Math.PI / 2), { y0: 0.15, y1: 1.9, max: 0.4, hash: 4.7 }), bodyPlain, ax, WHEEL_R + 0.12, side * TRACK);
     for (const zz of [-1, 1]) { const lip = mk(chassis, new THREE.TorusGeometry(FEND_R, 0.045, 10, 48, Math.PI), white, ax, WHEEL_R + 0.12, side * TRACK + zz * (WHEEL_W / 2 + 0.15), false); lip.castShadow = false; }
     // suspension
     const aLo = V(ax, 1.0, side * 0.95), aUp = V(ax, 1.4, side * 0.95), aSh = V(ax - 0.3, 1.42, side * 1.12);
@@ -253,6 +272,16 @@ export function buildRoverModel() {
     mk(chassis, new THREE.CylinderGeometry(0.1, 0.1, 0.5, 16).rotateX(Math.PI / 2), dark, ax, 0.95, side * (TRACK - 0.55));
   }
   for (const ax of AXLES) mk(chassis, new THREE.CylinderGeometry(0.035, 0.035, 2 * TRACK - 1.0, 10).rotateX(Math.PI / 2), steel, ax - 0.5, 0.75, 0);
+  // ground contact: a mottled dust/shadow pool under the whole vehicle and one under each wheel, so the rover
+  // visibly sits in the regolith instead of hovering on a clean slab (transparent: bake() leaves these live)
+  {
+    const gd = groundDustTexture();
+    const poolM = new THREE.MeshBasicMaterial({ map: gd, transparent: true, opacity: 0.85, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+    const pool = new THREE.Mesh(new THREE.PlaneGeometry(11.5, 5.6).rotateX(-Math.PI / 2), poolM);
+    pool.position.set(-0.2, 0.045, 0); pool.renderOrder = 1; root.add(pool);
+    const wheelM = new THREE.MeshBasicMaterial({ map: gd, transparent: true, opacity: 0.95, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+    for (const w of wheels) { const wp = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 2.3).rotateX(-Math.PI / 2), wheelM); wp.position.set(0, -WHEEL_R + 0.1, 0); wp.renderOrder = 1; w.hub.add(wp); }
+  }
   tube(chassis, [V(4.2, 1.02, -0.5), V(2.0, 0.78, -0.6), V(0.2, 0.9, -0.4), V(-1.6, 0.8, -0.5), V(-3.5, 0.95, -0.4)], 0.035, copper);
   tube(chassis, [V(4.2, 1.0, 0.5), V(2.0, 0.76, 0.6), V(0.2, 0.88, 0.4), V(-1.6, 0.78, 0.5), V(-3.5, 0.93, 0.4)], 0.035, std(0x1f4aa0, 0.5, 0.2));
 
@@ -343,7 +372,7 @@ export function buildRoverModel() {
   // X-band dish on a gimballed mast (dynamic so damage can bend it), UHF whips, mast camera, star tracker, mirror pods
   const dishG = dynGroup(new THREE.Group()); dishG.position.set(2.0, Yt, -0.7); cabG.add(dishG);
   mk(dishG, new THREE.CylinderGeometry(0.07, 0.1, 0.8, 16), steel, 0, 0.4, 0); mk(dishG, rbox(0.3, 0.2, 0.3, 0.09), grey, 0, 0.85, 0);
-  const bowl = mk(dishG, new THREE.SphereGeometry(0.55, 44, 16, 0, Math.PI * 2, 0, 0.62), std(0xf4f5f4, 0.3, 0.3, { side: THREE.DoubleSide }), 0.05, 1.15, 0); bowl.scale.y = 0.5; bowl.rotation.set(0, 0, -1.15);
+  const bowl = mk(dishG, new THREE.SphereGeometry(0.55, 44, 16, 0, Math.PI * 2, 0, 0.62), std(0xe8e6df, 0.55, 0.05, { side: THREE.DoubleSide }), 0.05, 1.15, 0); bowl.scale.y = 0.5; bowl.rotation.set(0, 0, -1.15);
   strut(dishG, V(0.05, 1.15, 0), V(0.45, 1.5, 0), 0.02, steel, 6); mk(dishG, new THREE.CylinderGeometry(0.03, 0.05, 0.14, 12), brass, 0.47, 1.52, 0).rotation.z = -1.0;
   bake(dishG, false);
   for (const [x, z, h] of [[1.6, 0.85, 1.7], [1.5, 0.55, 1.2]] as const) { strut(cabG, V(x, Yt, z), V(x, Yt + h, z), 0.012, dark, 6); mk(cabG, new THREE.SphereGeometry(0.03, 10, 8), steel, x, Yt + h, z, false); }
@@ -360,7 +389,7 @@ export function buildRoverModel() {
   {
     const leaf = roundedRect(hw, hy1 - hy0, 0.2), hole = new THREE.Path(); hole.absarc(-hw / 2, (hy1 - hy0) * 0.7, 0.25, 0, Math.PI * 2, true); leaf.holes.push(hole);
     const lg = new THREE.ExtrudeGeometry(leaf, { depth: 0.1, bevelEnabled: true, bevelSize: 0.035, bevelThickness: 0.03, bevelSegments: 3, curveSegments: 20 });
-    lg.translate(0, hy0, -0.22); mk(hatch, lg, std(0xffffff, 0.45, 0.2, { map: panelMap() }));
+    lg.translate(0, hy0, -0.22); mk(hatch, lg, std(0xffffff, 0.55, 0.05, { map: panelMap() }));
     const py = hy0 + (hy1 - hy0) * 0.7;
     for (const dz of [-0.17, 0.03]) mk(hatch, new THREE.TorusGeometry(0.27, 0.038, 12, 40), grey, -hw / 2, py, dz);
     mk(hatch, new THREE.CircleGeometry(0.25, 40), glassM, -hw / 2, py, -0.1).renderOrder = 2;
@@ -383,7 +412,7 @@ export function buildRoverModel() {
   mk(cab, rbox(0.06, 0.1, 2.8, 0.03), blue, CAB.x0 + 0.04, Yb + 0.35, 0, false);
   for (const z of [-0.8, 0.8]) mk(cab, rbox(1.2, 0.03, 0.4, 0.015), glowMat(0xfff1dd, 1.0), z < 0 ? 2.6 : 3.5, Yt - 0.04, z * 0.2, false);
   mk(cab, rbox(3.4, 0.04, 2.7, 0.03), std(0xe9edf0, 0.85, 0.02), 3.2, Yt - 0.06, 0, false);
-  const seatM = std(0x2c3340, 0.85, 0.05), seatTrim = std(0x1f4aa0, 0.8, 0.05);
+  const seatM = std(0x2c3340, 0.9, 0.03), seatTrim = std(0x42506b, 0.85, 0.03);   // fabric seats with worn foam, muted navy trim
   for (const z of [-0.62, 0.62]) {
     mk(cab, rbox(0.55, 0.14, 0.52, 0.07), seatM, 3.45, 1.96, z); mk(cab, rbox(0.14, 0.82, 0.5, 0.07), seatM, 3.14, 2.4, z); mk(cab, rbox(0.12, 0.26, 0.34, 0.06), seatM, 3.1, 2.95, z);
     mk(cab, rbox(0.4, 0.04, 0.54, 0.02), seatTrim, 3.45, 2.04, z); mk(cab, new THREE.CylinderGeometry(0.06, 0.08, 0.4, 14), dark, 3.45, 1.7, z);
@@ -434,7 +463,7 @@ export function buildRoverModel() {
   for (const s of [-1, 1]) for (const x of [bx0, bx1]) strut(bay, V(x, FLOOR_Y, s * 1.4), V(x, 3.35, s * 1.4), 0.055, white);
   for (const s of [-1, 1]) { strut(bay, V(bx0, 3.0, s * 1.4), V(bx1, 3.4, s * 1.4), 0.055, white); strut(bay, V(bx0, FLOOR_Y, s * 1.4), V(bx1, 3.4, s * 1.4), 0.03, steel); strut(bay, V(bx1, FLOOR_Y, s * 1.4), V(bx0, 3.0, s * 1.4), 0.03, steel); }
   strut(bay, V(bx0, 3.0, -1.4), V(bx0, 3.0, 1.4), 0.055, white); strut(bay, V(bx1, 3.4, -1.4), V(bx1, 3.4, 1.4), 0.055, white);
-  mk(bay, rbox(2.6, 0.12, 2.9, 0.05), std(0xffffff, 0.8, 0.3, { map: diamondTex(5, 5) }), 0.1, FLOOR_Y + 0.03, 0);
+  mk(bay, rbox(2.6, 0.12, 2.9, 0.05), std(0xa8adb3, 0.65, 0.5, { map: diamondTex(5, 5) }), 0.1, FLOOR_Y + 0.03, 0);
   const hexG = new THREE.ExtrudeGeometry(hexShape(0.58, 0.07), { depth: 0.45, bevelEnabled: true, bevelSize: 0.04, bevelThickness: 0.05, bevelSegments: 3 }).translate(0, 0, -0.225);
   for (const s of [-1, 1]) for (const x of [-0.45, 0.8]) {
     mk(bay, hexG, gold, x, 2.35, s * 1.05);
@@ -483,7 +512,7 @@ export function buildRoverModel() {
       const m = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.8), splashM); m.position.set(x, 1.5, s * 1.56); m.rotation.y = s < 0 ? Math.PI : 0; bed.add(m);
     }
   }
-  mk(bed, rbox(4.0, 0.12, 3.1, 0.05), std(0xdfe0dc, 0.78, 0.3, { map: diamondTex(8, 6) }), -3.2, FLOOR_Y + 0.02, 0);   // dusty deck plate
+  mk(bed, rbox(4.0, 0.12, 3.1, 0.05), std(0xb4b6ae, 0.7, 0.5, { map: diamondTex(8, 6) }), -3.2, FLOOR_Y + 0.02, 0);   // dusty deck plate
   mk(bed, rbox(4.0, 0.3, 0.1, 0.05), white, -3.2, FLOOR_Y - 0.14, -1.5); mk(bed, rbox(4.0, 0.3, 0.1, 0.05), white, -3.2, FLOOR_Y - 0.14, 1.5);
   for (const s of [-1, 1]) {
     tube(bed, [V(-1.25, FLOOR_Y + 0.5, s * 1.5), V(-5.15, FLOOR_Y + 0.5, s * 1.5)], 0.025, steel, 4);
@@ -491,10 +520,14 @@ export function buildRoverModel() {
   }
   tube(bed, [V(-5.15, FLOOR_Y + 0.5, -1.5), V(-5.15, FLOOR_Y + 0.5, 1.5)], 0.025, steel, 4);
   for (const [x, z] of [[-1.6, -1.2], [-1.6, 1.2], [-4.9, -1.2], [-4.9, 1.2], [-3.2, -1.35], [-3.2, 1.35]] as const) mk(bed, new THREE.TorusGeometry(0.07, 0.015, 8, 16).rotateX(Math.PI / 2), steel, x, FLOOR_Y + 0.1, z, false);
-  const crateM = std(0xe6e9ec, 0.5, 0.2), plates = ['LUNAR SAMPLES 1', 'LUNAR SAMPLES 2', 'DRILL KIT'];
+  const crateM = std(0xe0ddd3, 0.65, 0.05), plates = ['LUNAR SAMPLES 1', 'LUNAR SAMPLES 2', 'DRILL KIT'];
   [[-1.9, -0.75], [-1.9, 0.5], [-3.0, -0.8]].forEach(([x, z], i) => {
-    mk(bed, rbox(0.9, 0.55, 0.65, 0.1), crateM, x, FLOOR_Y + 0.4, z); mk(bed, rbox(0.92, 0.05, 0.67, 0.03), i === 2 ? red : blue, x, FLOOR_Y + 0.52, z);
-    mk(bed, new THREE.PlaneGeometry(0.5, 0.094), new THREE.MeshBasicMaterial({ map: plateTexture(plates[i]) }), x, FLOOR_Y + 0.36, z + 0.336, false); });
+    // cargo is never square to the frame: each crate sits at its own slight angle, label and all
+    const cg = new THREE.Group(); cg.position.set(x, FLOOR_Y, z); cg.rotation.y = (i - 1) * 0.14 + 0.05; bed.add(cg);
+    mk(cg, rbox(0.9, 0.55, 0.65, 0.1), crateM, 0, 0.4, 0);
+    mk(cg, rbox(0.92, 0.05, 0.67, 0.03), i === 2 ? red : blue, 0, 0.52, 0);
+    mk(cg, new THREE.PlaneGeometry(0.5, 0.094), new THREE.MeshBasicMaterial({ map: plateTexture(plates[i]) }), 0, 0.36, 0.336, false);
+  });
   for (const x of [-3.7, -4.2]) { mk(bed, new THREE.CylinderGeometry(0.2, 0.2, 1.1, 20), steel, x, FLOOR_Y + 0.62, 0.9); mk(bed, new THREE.TorusGeometry(0.2, 0.025, 8, 24).rotateX(Math.PI / 2), yellow, x, FLOOR_Y + 0.9, 0.9); mk(bed, new THREE.SphereGeometry(0.2, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), steel, x, FLOOR_Y + 1.17, 0.9); }
   for (const z of [-1, 1]) for (const x of [-2.4, -3.4]) mk(bed, rbox(0.06, 0.012, 0.8, 0.005), std(0xe8b923, 0.8, 0), x, FLOOR_Y + 0.72, z * 0.3, false);
   tube(bed, [V(-5.15, FLOOR_Y + 1.1, -1.4), V(-5.15, FLOOR_Y + 1.1, 1.4)], 0.02, steel, 4); for (const s of [-1, 1]) strut(bed, V(-5.15, FLOOR_Y, s * 1.4), V(-5.15, FLOOR_Y + 1.1, s * 1.4), 0.02, steel, 8);

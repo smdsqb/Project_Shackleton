@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { buildSuit, type SuitParts } from './suit';
 import { heightAt } from './terrain';
-import { NASA } from './livery';
+import { NASA, wornMat } from './livery';
 
 const P = Math.PI, EYE = 1.7, MAX_PRINTS = 260;
 const rb = (w: number, h: number, d: number, r = 0.01) => new RoundedBoxGeometry(w, h, d, 3, Math.max(0.002, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001)));
@@ -21,9 +21,9 @@ export class Player {
   private suitBody = buildSuit({ suited: true, shadowOnly: true });
   private crewBody = buildSuit({ suited: false, shadowOnly: true });
   private armL = new THREE.Group(); private armR = new THREE.Group();
-  private sleeveM = new THREE.MeshStandardMaterial({ color: NASA.blue, roughness: 0.85 });
-  private handM = new THREE.MeshStandardMaterial({ color: 0xb98563, roughness: 0.8 });
-  private cuffM = new THREE.MeshStandardMaterial({ color: 0x9aa1ab, roughness: 0.7, metalness: 0.2 });
+  private sleeveM = wornMat(NASA.blue, 'fabric', { rough: 0.9, repeat: 1 });
+  private handM = wornMat(0xb98563, 'fabric', { rough: 0.85, repeat: 1 });
+  private cuffM = wornMat(0x9aa1ab, 'metal', { rough: 0.6, metal: 0.2, repeat: 1 });
   private padParts: THREE.Object3D[] = []; private padTex: THREE.CanvasTexture; private padCtx: CanvasRenderingContext2D;
   private cuffs: THREE.Object3D[] = [];
   private prints: THREE.InstancedMesh; private nPrints = 0; private foot = 1; private acc = 0;

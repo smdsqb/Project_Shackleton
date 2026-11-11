@@ -3,7 +3,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import type { Sim } from './sim';
 import { buildSuit } from './suit';
 import { oxygenator, atmosReg, waterReclaimer, co2Scrubber, extinguisher } from './machines';
-import { NASA, panelTexture, tileTexture, crinkleTexture, meatball, worm, plateTexture, flagTexture, grainTexture, floorTextures } from './livery';
+import { NASA, panelTexture, tileTexture, crinkleTexture, meatball, worm, plateTexture, flagTexture, floorTextures, wornMat, dustGradient, goldFoil, wearTextures } from './livery';
 import { wardrobe, medicalCabinet, firstAidKit, washroom, type Hinge } from './furnishings';
 
 // The Hab: a rigid, painted-aluminium surface habitat (drum + dome, ~155 m2 of floor) with a thermal-blanket skirt,
@@ -29,9 +29,9 @@ type Cabin = { th: number; r0: number; xa: number; xb: number; hw: number; dw: n
 export const WASH_CIRCLES = [-0.65, 0.05].flatMap((lx) => [-0.45, 0.45].map((lz) => { const th = 0.9 * Math.PI, c = Math.cos(th), sn = Math.sin(th); return { x: 6.5 * c + lx * c - lz * sn, z: 6.5 * sn + lx * c * 0 + lx * sn + lz * c, r: 0.85 }; }));
 
 const mat = (c: number, glow = false, rough = 0.55, metal = 0.1) => {
-  const m = new THREE.MeshStandardMaterial({ color: c, roughness: rough, metalness: metal, ...(glow ? { emissive: c, emissiveIntensity: 1.2 } : {}) });
-  if (!glow) { m.color.offsetHSL(0, -0.1, -0.012); m.roughnessMap = grainTexture(); m.bumpMap = grainTexture(); m.bumpScale = 0.35; }   // slightly muted colour and a fine grain, so nothing looks like flat toy plastic
-  return m;
+  if (glow) return new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 1.2, roughness: 0.4 });
+  // worn dielectric surfaces: patchy roughness, scuffs, grime; bare-metal look only where the caller means it
+  return wornMat(c, metal >= 0.35 ? 'metal' : 'paint', { rough, metal: metal >= 0.35 ? metal : 0.04, repeat: 2 });
 };
 const rbox = (w: number, h: number, d: number, r = 0.04) => new RoundedBoxGeometry(w, h, d, 3, Math.max(0.002, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001)));
 function label(text: string, w = 0.55) {
@@ -101,7 +101,7 @@ function dustSkirtTexture() {
   if (skirtTex) return skirtTex;
   const c = document.createElement('canvas'); c.width = 128; c.height = 256; const g = c.getContext('2d')!;
   const gr = g.createLinearGradient(0, 0, 0, 256);   // canvas bottom row = uv v = 0 = the base of the wall
-  gr.addColorStop(0, 'rgba(116,109,99,0)'); gr.addColorStop(0.42, 'rgba(112,106,96,0.24)'); gr.addColorStop(0.78, 'rgba(97,92,85,0.52)'); gr.addColorStop(1, 'rgba(84,80,75,0.72)');
+  gr.addColorStop(0, 'rgba(116,109,99,0)'); gr.addColorStop(0.45, 'rgba(108,102,92,0.34)'); gr.addColorStop(0.8, 'rgba(92,87,80,0.6)'); gr.addColorStop(1, 'rgba(78,74,69,0.8)');
   g.fillStyle = gr; g.fillRect(0, 0, 128, 256);
   for (let i = 0; i < 240; i++) {   // clumps and sprays kicked up against the hull
     const y = 110 + Math.random() * 146, x = Math.random() * 128, rr = 2 + Math.random() * 9;
@@ -142,19 +142,21 @@ export class Hab {
       const o = new THREE.Mesh(g, m); o.position.set(x, y, z); o.castShadow = shadow ?? shadowOn; o.receiveShadow = true; parent.add(o); return o;
     };
 
-    // ---- shell: painted panels outside, soft lining inside, gold MLI skirt, blue interior band ----
+    // ---- shell: painted panels outside (dielectric: paint is not metal), soft lining inside, gold MLI skirt, blue interior band ----
     const gap = Math.asin(0.8 / R), arc = P - 2 * gap, starts = [P / 2 + gap, (3 * P) / 2 + gap];
-    const shellM = new THREE.MeshStandardMaterial({ map: panelTexture('#f2f4f6', '#a9b1ba', 30, 2), roughness: 0.42, metalness: 0.2 });
-    const liningM = new THREE.MeshStandardMaterial({ map: panelTexture('#ddd9d2', '#b0a9a0', 30, 2), roughness: 0.78, metalness: 0.03, side: THREE.BackSide });   // warm-grey interior: lived-in, not sterile white
-    const domeM = new THREE.MeshStandardMaterial({ map: panelTexture('#f2f4f6', '#a9b1ba', 28, 3), roughness: 0.42, metalness: 0.2 });
-    const ceilM = new THREE.MeshStandardMaterial({ map: panelTexture('#e0dbd3', '#b6b0a7', 28, 3), roughness: 0.82, metalness: 0.02, side: THREE.BackSide });
-    const gold = new THREE.MeshStandardMaterial({ color: 0xd4ac4e, roughness: 0.28, metalness: 0.88, bumpMap: crinkleTexture(16, 1), bumpScale: 2 });   // brighter, sharper-reflecting MLI so the foil reads as gold in the dim lunar env
-    const bandM = new THREE.MeshStandardMaterial({ color: 0x274066, roughness: 0.8, metalness: 0.04, bumpMap: crinkleTexture(26, 1), bumpScale: 0.6, side: THREE.BackSide });   // dusty-navy soft-goods band, not lacquered toy blue
-    const kickM = new THREE.MeshStandardMaterial({ color: NASA.graphite, roughness: 0.7, side: THREE.BackSide });
+    const shellM = wornMat(0xffffff, 'paint', { rough: 0.55, metal: 0.03, repeat: 2, extra: { map: panelTexture('#f2f4f6', '#a9b1ba', 30, 2), side: THREE.FrontSide, vertexColors: true } });
+    const liningM = wornMat(0xffffff, 'paint', { rough: 0.8, metal: 0.02, repeat: 2, extra: { map: panelTexture('#ddd9d2', '#b0a9a0', 30, 2), side: THREE.BackSide } });   // warm-grey interior: lived-in, not sterile white
+    const domeM = wornMat(0xffffff, 'paint', { rough: 0.55, metal: 0.03, repeat: 2, extra: { map: panelTexture('#f2f4f6', '#a9b1ba', 28, 3), vertexColors: true } });
+    const ceilM = wornMat(0xffffff, 'paint', { rough: 0.85, metal: 0.02, repeat: 2, extra: { map: panelTexture('#e0dbd3', '#b6b0a7', 28, 3), side: THREE.BackSide } });
+    const foil = goldFoil(18, 1);
+    const gold = new THREE.MeshStandardMaterial({ color: 0xffffff, map: foil.map, bumpMap: foil.bump, bumpScale: 1.8, metalness: 0.86, roughness: 0.38, roughnessMap: wearTextures('metal', 2).rough });   // real MLI: every crease catches its own light
+    const bandM = wornMat(0x274066, 'fabric', { rough: 0.85, extra: { bumpMap: crinkleTexture(26, 1), bumpScale: 0.6, side: THREE.BackSide } });   // dusty-navy soft-goods band, not lacquered toy blue
+    const kickM = wornMat(NASA.graphite, 'rubber', { rough: 0.75, extra: { side: THREE.BackSide } });
     const trimM = mat(0xc9ced6, false, 0.35, 0.45);
     const wallA = wallAlpha(), shellW = shellM.clone(), liningW = liningM.clone();
     shellW.alphaMap = liningW.alphaMap = wallA; shellW.alphaTest = liningW.alphaTest = 0.5;
-    mesh(new THREE.CylinderGeometry(R, R, WALL_H, 144, 1, true), shellW, 0, WALL_H / 2, 0, this.root, true);
+    // dust settles toward the ground: a mottled warm-grey vertex film on the hull (heavy below 1 m, fading by 3.2 m)
+    mesh(dustGradient(new THREE.CylinderGeometry(R, R, WALL_H, 144, 6, true), { y1: 3.2, max: 0.55, hash: 1.7 }), shellW, 0, WALL_H / 2, 0, this.root, true);
     mesh(new THREE.CylinderGeometry(R - 0.06, R - 0.06, WALL_H, 144, 1, true), liningW, 0, WALL_H / 2, 0);
     for (const s of starts) {
       mesh(new THREE.CylinderGeometry(R + 0.14, R + 0.14, 0.55, 72, 1, true, s, arc), gold, 0, 0.275, 0, this.root, true);
@@ -163,10 +165,20 @@ export class Hab {
       const ring = mesh(new THREE.TorusGeometry(R + 0.02, 0.1, 12, 72, arc).rotateX(-P / 2), trimM, 0, WALL_H, 0, this.root, true); ring.rotation.y = s - P / 2;
       const foot = mesh(new THREE.TorusGeometry(R + 0.16, 0.06, 10, 72, arc).rotateX(-P / 2), trimM, 0, 0.56, 0); foot.rotation.y = s - P / 2;
     }
-    const cap = mesh(new THREE.SphereGeometry(R, 72, 28, 0, P * 2, 0, P / 2), domeM, 0, WALL_H, 0, this.root, true); cap.scale.y = CAP_H / R;
+    const cap = mesh(dustGradient(new THREE.SphereGeometry(R, 72, 28, 0, P * 2, 0, P / 2), { y0: 1.2, y1: 4.2, max: 0.3, hash: 2.3 }), domeM, 0, WALL_H, 0, this.root, true); cap.scale.y = CAP_H / R;
     const capIn = mesh(new THREE.SphereGeometry(R - 0.06, 72, 28, 0, P * 2, 0, P / 2), ceilM, 0, WALL_H, 0); capIn.scale.y = (CAP_H - 0.04) / (R - 0.06);
-    const rib = new THREE.MeshStandardMaterial({ color: 0xdfe3e8, roughness: 0.6 });
+    const rib = wornMat(0xdfe3e8, 'metal', { rough: 0.5, metal: 0.3, repeat: 2 });
     for (let i = 0; i < 8; i++) { const t = mesh(new THREE.TorusGeometry(R - 0.07, 0.05, 10, 48, P), rib, 0, WALL_H, 0); t.scale.y = CAP_H / R; t.rotation.y = (i * P) / 8; }
+    // assembled-drum cues: two circumferential hoop seams plus 14 vertical panel-joint covers on the hull,
+    // each fastened with a bolt head, so the shell reads as riveted sheets rather than one moulded tube
+    for (const hy of [0.78, 1.52]) mesh(new THREE.TorusGeometry(R + 0.015, 0.045, 8, 96).rotateX(-P / 2), trimM, 0, hy, 0, this.root, true);
+    for (let i = 0; i < 14; i++) {
+      const th = (i / 14) * P * 2 + 0.11;
+      if (Math.abs(th - P / 2) < 0.35 || Math.abs(th - (3 * P) / 2) < 0.35 || Math.abs(th - (5 * P) / 2) < 0.35 || Math.abs(th - (7 * P) / 2) < 0.35) continue;   // keep the airlock tunnels clear
+      const seam = mesh(new THREE.CylinderGeometry(R + 0.012, R + 0.012, WALL_H - 0.06, 6, 1, true, th, 0.075), trimM, 0, WALL_H / 2, 0, this.root, true);
+      for (const by of [0.34, 1.06, 1.78]) mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.012, 8).rotateX(P / 2), rib, (R + 0.055) * Math.cos(th), by, (R + 0.055) * Math.sin(th), this.root, true).rotation.y = -th;
+      void seam;
+    }
     // regolith dust caked on the lower hull: two overlay arcs that stop short of the airlock tunnels
     const skirtM = new THREE.MeshStandardMaterial({ map: dustSkirtTexture(), transparent: true, roughness: 1, metalness: 0, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
     for (const s of starts) { const sk = mesh(new THREE.CylinderGeometry(R + 0.035, R + 0.035, 0.95, 72, 1, true, s, arc), skirtM, 0, 0.475, 0); sk.renderOrder = 1; }
@@ -183,7 +195,7 @@ export class Hab {
     lamp(0xffe2bd, 3.5, 5, 0, 2.5, GZ);                                          // galley
 
     // ---- portholes, decals, livery ----
-    const trim2 = mat(0xb9bfc8, false, 0.3, 0.6), sleeveM = new THREE.MeshStandardMaterial({ color: 0xb9bfc8, roughness: 0.4, metalness: 0.5, side: THREE.DoubleSide });
+    const trim2 = mat(0xb9bfc8, false, 0.3, 0.6), sleeveM = wornMat(0xb9bfc8, 'metal', { rough: 0.35, metal: 0.5, extra: { side: THREE.DoubleSide } });
     const paneM = this.paneM = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.03, metalness: 0, transparent: true, opacity: 0.07, depthWrite: false });
     const porthole = (psi: number, y: number) => {
       const at = (r: number) => { const g = new THREE.Group(); g.position.set(r * Math.cos(psi), y, r * Math.sin(psi)); g.rotation.y = -psi; this.root.add(g); return g; };
@@ -263,7 +275,7 @@ export class Hab {
     for (let i = 0; i < 5; i++) {
       const a = (i / 5) * 2 * P, sx = 1.15 * Math.cos(a), sz = GZ + 1.15 * Math.sin(a);
       mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.36, 10), mat(0x7a838f), sx, 0.2, sz);
-      const seat = mesh(new THREE.SphereGeometry(0.24, 20, 14), mat(0x2c5aa0, false, 0.85), sx, 0.45, sz); seat.scale.y = 0.4;
+      const seat = mesh(new THREE.SphereGeometry(0.24, 20, 14), mat(0x3d5a85, false, 0.85), sx, 0.45, sz); seat.scale.y = 0.4;
     }
     this.circles.push({ x: 0, z: GZ, r: 1.25 });
 
@@ -420,7 +432,7 @@ export class Hab {
 
   private makeLock(name: string, ang: number): Lock {
     const g = new THREE.Group(); g.rotation.y = -ang; this.root.add(g);
-    const R = HAB_R, P = Math.PI, hull = new THREE.MeshStandardMaterial({ map: panelTexture('#f0f2f5', '#a9b1ba', 2, 1), roughness: 0.45, metalness: 0.2, side: THREE.DoubleSide });
+    const R = HAB_R, P = Math.PI, hull = wornMat(0xffffff, 'paint', { rough: 0.55, metal: 0.03, extra: { map: panelTexture('#f0f2f5', '#a9b1ba', 2, 1), side: THREE.DoubleSide } });
     const frameM = mat(NASA.grey, false, 0.45, 0.4), doorM = mat(0xe6e9ed, false, 0.4, 0.3);
     const box = (sx: number, sy: number, sz: number, x: number, y: number, z: number, m: THREE.Material, p: THREE.Object3D = g, r = 0.04) => {
       const o = new THREE.Mesh(rbox(sx, sy, sz, r), m); o.position.set(x, y, z); o.castShadow = o.receiveShadow = true; p.add(o); return o;
