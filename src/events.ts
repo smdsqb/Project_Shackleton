@@ -114,6 +114,7 @@ export const EVENTS: EventDef[] = [
   {
     id: 'duststorm', title: 'DUST STORM: LOCKDOWN', tag: 'POWER / SAFETY', windowS: 25, defaultIdx: 2, weight: (s) => (s.lockdown || s.dustHoursLeft > 0 ? 0 : 0.12),
     make: (s) => {
+      s.stormWarn = true;   // the dust is already rolling in while the crew decides
       const hrs = 12 + Math.round(s.rnd() * 8), pct = s.batteryKwh / s.batteryCap;
       const lock = () => { s.lockdown = { reason: 'ELECTROSTATIC DUST STORM', left: hrs, storm: 1 }; s.dustRateH = 0.02; s.dustHoursLeft = hrs; };
       return {
@@ -133,9 +134,10 @@ export const EVENTS: EventDef[] = [
       const hits = 1 + Math.floor(s.rnd() * 3), land = (protectArray: boolean, protectCrew: boolean) => {
         const out: string[] = [];
         for (let i = 0; i < hits; i++) { const r = s.rnd(); if (r < 0.5) { if (!protectArray) { s.arrayHealth = Math.max(0.1, s.arrayHealth - 0.04); s.arrayCap = Math.min(s.arrayCap, s.arrayHealth + 0.1); out.push('a cell panel took a hit'); } } else if (r < 0.75) { if (s.leakKpaH <= 0) { s.leakKpaH = 0.19 * 1.2 * 1.2; out.push('the hull is punctured'); } } else if (r < 0.9 && !protectCrew && !s.injured) { s.injured = true; out.push('spall hit a crew member'); } }
+        s.fxq.push({ type: 'meteors', n: hits, hitArray: out.some((o) => o.includes('cell panel')), hitHull: out.some((o) => o.includes('punctured')) });
         return out.length ? `${hits} impacts: ${out.join(', ')}.` : `${hits} impacts, all clear misses.`;
       };
-      s.lockdown = { reason: 'METEOROID SWARM', left: 3 + s.rnd() * 2, storm: 0 };
+      s.lockdown = { reason: 'METEOROID SWARM', left: 3 + s.rnd() * 2, storm: 0 }; s.fxq.push({ type: 'streaks', n: 6 });
       return {
         brief: `Tracking shows a swarm of micrometeoroids crossing the site in about 10 minutes: ${hits} impacts expected, each as fast as a rifle bullet ten times over. Nobody goes outside until it passes. Crew in the shielded core are safe from spalling inside the hull; the array is the most exposed thing you own.`,
         advice: { idx: 0, why: 'Shelter the crew and fold the array. Power can be rebuilt; people cannot.' },
@@ -285,12 +287,27 @@ export const EVENTS: EventDef[] = [
   },
 ];
 
+/** Pacing: a crisis roughly every day and a quarter, never closer than 12 sim hours. Real flare activity nudges the odds up a little. */
+export const RATE_PER_DAY = 1.05, MIN_GAP_H = 12;
+/** The first three crises are always these, so a new crew sees a dust storm, a moonquake and a meteoroid swarm early. Random after that. */
+export const SCRIPT = ['duststorm', 'quake', 'swarm'];
+
 export class Director {
-  active: ActiveEvent | null = null; cooldownH = 1; ready = true;
+  active: ActiveEvent | null = null; cooldownH = 8; ready = true;   // first crisis after about 50 real seconds, not 12
   history: { title: string; choice: string; outcome: string; auto: boolean; day: number }[] = [];
   onEvent: (e: ActiveEvent) => void = () => {}; onResolve: (msg: string) => void = () => {};
   constructor(private s: Sim) {}
   linkUp = () => this.s.linkOk;
+
+  private start(def: EventDef) {
+    const m = def.make(this.s); this.active = { def, brief: m.brief, choices: m.choices, advice: m.advice, left: def.windowS, asked: null, reply: null };
+    this.onEvent(this.active);
+  }
+  /** Instructor: inject a fault right now (training / testing) */
+  inject(id: string): string {
+    if (this.active) return 'FINISH THE CURRENT DECISION FIRST'; const def = EVENTS.find((e) => e.id === id); if (!def) return 'UNKNOWN FAULT';
+    this.start(def); return '';
+  }
 
   /** Called every frame with sim hours elapsed and real seconds elapsed. */
   frame(simH: number, realS: number) {
@@ -302,14 +319,14 @@ export class Director {
       return;
     }
     this.cooldownH -= simH; if (this.cooldownH > 0) return;
-    if (this.history.length > 0 && s.openHazards >= 3) return; // fairness: never pile a fourth crisis onto three open ones
+    if (this.history.length >= SCRIPT.length && s.openHazards >= 3) return;   // fairness: never pile a fourth crisis onto three open ones
+    // scripted opening: the next one in the script, as soon as the gap is over
+    if (this.history.length < SCRIPT.length) { const def = EVENTS.find((e) => e.id === SCRIPT[this.history.length])!; this.start(def); return; }
     const total = EVENTS.reduce((t, e) => t + e.weight(s), 0); if (total <= 0) return;
-    if (s.rnd() < (total * simH * 1.0) / 24 * 1.6 || (s.t < 3 && s.t > 1.0 && this.history.length === 0)) {
+    if (s.rnd() < (RATE_PER_DAY / 24) * Math.min(1.8, total / 2) * simH) {
       let x = s.rnd() * total, def = EVENTS[0];
-      if (this.history.length === 0) def = EVENTS[0]; // sol-214 opener: the dust cloud
-      else for (const e of EVENTS) { x -= e.weight(s); if (x <= 0) { def = e; break; } }
-      const m = def.make(s); this.active = { def, brief: m.brief, choices: m.choices, advice: m.advice, left: def.windowS, asked: null, reply: null };
-      this.onEvent(this.active);
+      for (const e of EVENTS) { x -= e.weight(s); if (x <= 0) { def = e; break; } }
+      this.start(def);
     }
   }
   ask() {
@@ -318,7 +335,7 @@ export class Director {
     a.asked = a.left; return '';
   }
   resolve(idx: number, auto = false) {
-    const a = this.active; if (!a) return; this.active = null; this.cooldownH = 2.5;
+    const a = this.active; if (!a) return; this.active = null; this.cooldownH = this.history.length < SCRIPT.length ? 24 : MIN_GAP_H; this.s.stormWarn = false;   // the three scripted ones are a day apart
     const out = a.choices[idx].run(this.s);
     this.history.push({ title: a.def.title, choice: a.choices[idx].label, outcome: out, auto, day: SIM.startDay + Math.floor(this.s.t / 24) });
     this.s.say(`${a.def.title}: ${auto ? 'NO DECISION, default applied: ' : ''}${a.choices[idx].label}. ${out}`);

@@ -12,7 +12,8 @@ import { Hab, WALL_H, CAP_H } from './hab';
 import { Player } from './player';
 import { Comms, type Link } from './comms';
 import { Director } from './events';
-import { UI, ensureAudio, beep, rumble } from './ui';
+import { UI, ensureAudio, beep, rumble, boom, hiss } from './ui';
+import { Fx } from './fx';
 import { Storm } from './storm';
 
 // Initialize Vercel Web Analytics
@@ -116,6 +117,7 @@ function buildWorld() {
 const sim = new Sim();
 const dir = new Director(sim);
 const storm = new Storm(scene);
+const fx = new Fx(scene, heightAt, arrayPos, { boom, hiss });
 (earth.material as THREE.MeshStandardMaterial).fog = false;
 const shakeOff = new THREE.Vector3(); let prevQuake = 0, prevLock = false, recallT = 0;
 let hab: Hab | null = null;
@@ -279,7 +281,11 @@ function frame() {
   sunLive = s.live; sd.set(s.x, s.y, s.z); earthDir.set(e.x, e.y, e.z); earthEl = e.el;
   const inRover = !!rover && rover.inside, inside = (hab ? hab.inHab(camera.position.x, camera.position.z) : false) || inRover;
   ambK += ((inside ? 0.1 : 0.35) - ambK) * Math.min(1, dt * 3); amb.intensity = ambK;
-  storm.update(dt, camera.position, sim.lockdown?.storm ?? 0, !inside);
+  storm.update(dt, camera.position, sim.lockdown?.storm ?? (sim.stormWarn ? 0.45 : 0), !inside);
+  ui.setHaze(storm.level * (inside ? 0 : 0.78));
+  fx.update(running ? dt : 0, camera.position, sim); hab && (hab.flicker = Math.min(1, fx.shake * 1.1));
+  const spR = sim.spe && sim.t >= sim.spe.arrive ? Math.min(1, sim.speRateUnshielded() / 8) : 0; ui.setRad(spR * (inside && sim.shelter ? 0.3 : 1), dt);
+  crew?.setSymptom(sim.symptom?.kind ?? null, sim.symptom?.n ?? 0);
   hab?.setShutters(storm.level);
 
   const px0 = camera.position.x, pz0 = camera.position.z;
@@ -326,7 +332,7 @@ function frame() {
   litT += dt; hudT += dt;
   if (litT > 0.25) { litT = 0; sim.sunlit = isSunlit(arrayPos, sd); earthVisible = earthEl > 0.003 && isSunlit(dishPos, earthDir); }
   if (hudT > 0.25) { hudT = 0; drawHud(s.az, s.el); }
-  if (sim.quakeS > 0) { const a = 0.045 * Math.min(1, sim.quakeS / 3); shakeOff.set((Math.random() - 0.5) * a, (Math.random() - 0.5) * a * 0.7, (Math.random() - 0.5) * a); camera.position.add(shakeOff); }
+  if (fx.shake > 0.01) { const a = 0.16 * fx.shake; shakeOff.set((Math.random() - 0.5) * a, (Math.random() - 0.5) * a * 0.7, (Math.random() - 0.5) * a); camera.position.add(shakeOff); camera.rotation.x += (Math.random() - 0.5) * 0.035 * fx.shake; camera.rotation.z += (Math.random() - 0.5) * 0.06 * fx.shake; }
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }

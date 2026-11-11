@@ -24,7 +24,7 @@ Keep 5 crew alive at Shackleton for 14 days. The sim (`src/sim.ts`) couples powe
 - Clock: one fixed rate (600x, so 14 days take about 35 minutes) that eases to 60x on its own during a decision card or an EVA. No player-controlled time warp. Keys: M tablet, P array, 1-3 decide, H ask Houston, E interact. Food production is deliberately left out of this version.
 - Training tempo: events are far more frequent than in reality. `SIM.commsAlwaysOn` keeps the Earth link up regardless of line of sight; set it to `false` for the strict rules.
 
-### Crises (17 types, about 30 per mission) and what they force you to do
+### Crises (17 types, about 10 per mission) and what they force you to do
 
 Every crisis stays open until the crew acts on it, and the open ones get worse. At most three are ever open at once.
 
@@ -32,6 +32,9 @@ Every crisis stays open until the crew acts on it, and the open ones get worse. 
 - **Meteoroid swarm (lockdown), moonquake** (camera shake, hidden damage you must inspect for), **battery thermal runaway, electrical fire, water line rupture, coolant pump failure, solar radio blackout, crew injury, array string fault, pressure sensor alarm** (real leak or bad sensor? verify first), plus dust cloud, solar storm, hull breach, scrubber, oxygenator and antenna faults.
 - **Shelter / lockdown recall:** pressing "enter storm shelter" on the tablet, choosing SHELTER NOW, or any lockdown makes every crew member (including the sleeper and whoever is on EVA) drop what they are doing and run back to the hab. The duty roster freezes until the all-clear, and anyone still outside takes the full dose. If you are outside, a repeating alarm and a flashing banner tell you to get in, and hatches never lock you out from the surface.
 - Airlocks: crew use the nearer airlock one at a time (a mutex), a hatch never opens while its partner is open (including one the player left open, which the crew will seal after a few seconds), and the player cannot cycle or open an airlock a crew member is using. A crew member caught inside an airlock when the order comes goes back the way they came. Crew that get pinned against an obstacle (such as a parked rover) squeeze past it instead of staying stranded.
+- Pacing: roughly 0.7 crises a day, never closer than 12 sim hours. The first three are always a dust storm, a moonquake and a meteoroid swarm, about a day apart; random after that. Real flare activity nudges the odds up a little.
+- Every crisis leaves visible evidence: meteor tracers with impact flashes and ejecta thrown in long lunar-gravity arcs, a battery explosion, a lab fire with smoke and orange light, steam from a failed radiator, a water spray inside the hab, a vapour jet from a hull breach, arcing sparks at a faulty array string, heavy quake shaking with stuttering lights, dust haze and drifting dust in a storm, and radiation hits flashing across the view. Crew visibly cough, clutch an injury or sway dizzily when the air, heat, a fire, an injury or radiation is hurting them.
+- The tablet (M) has an Instructor panel to inject any fault on demand so you can practise or see the effects without waiting.
 - Emergencies pull the crew off their current task; you can also stop a task from the tablet (progress is lost).
 - Keys: **Tab closes the comms desk and the radio pad** (Esc is only pause).
 
