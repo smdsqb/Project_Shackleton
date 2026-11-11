@@ -145,9 +145,9 @@ export class Hab {
     // ---- shell: painted panels outside (dielectric: paint is not metal), soft lining inside, gold MLI skirt, blue interior band ----
     const gap = Math.asin(0.8 / R), arc = P - 2 * gap, starts = [P / 2 + gap, (3 * P) / 2 + gap];
     const shellM = wornMat(0xffffff, 'paint', { rough: 0.55, metal: 0.03, repeat: 2, extra: { map: panelTexture('#f2f4f6', '#a9b1ba', 30, 2), side: THREE.FrontSide, vertexColors: true } });
-    const liningM = wornMat(0xffffff, 'paint', { rough: 0.8, metal: 0.02, repeat: 2, extra: { map: panelTexture('#ddd9d2', '#b0a9a0', 30, 2), side: THREE.BackSide } });   // warm-grey interior: lived-in, not sterile white
+    const liningM = wornMat(0xffffff, 'paint', { rough: 0.8, metal: 0.02, repeat: 2, extra: { map: panelTexture('#e6e2db', '#b3aca2', 30, 2, 0.38), side: THREE.BackSide } });   // warm-grey interior, but a pressurised hab gets wiped down: interior grime dialed way back
     const domeM = wornMat(0xffffff, 'paint', { rough: 0.55, metal: 0.03, repeat: 2, extra: { map: panelTexture('#f2f4f6', '#a9b1ba', 28, 3), vertexColors: true } });
-    const ceilM = wornMat(0xffffff, 'paint', { rough: 0.85, metal: 0.02, repeat: 2, extra: { map: panelTexture('#e0dbd3', '#b6b0a7', 28, 3), side: THREE.BackSide } });
+    const ceilM = wornMat(0xffffff, 'paint', { rough: 0.85, metal: 0.02, repeat: 2, extra: { map: panelTexture('#e7e2da', '#b8b2a9', 28, 3, 0.38), side: THREE.BackSide } });
     const foil = goldFoil(18, 1);
     const gold = new THREE.MeshStandardMaterial({ color: 0xffffff, map: foil.map, bumpMap: foil.bump, bumpScale: 1.8, metalness: 0.86, roughness: 0.38, roughnessMap: wearTextures('metal', 2).rough });   // real MLI: every crease catches its own light
     const bandM = wornMat(0x274066, 'fabric', { rough: 0.85, extra: { bumpMap: crinkleTexture(26, 1), bumpScale: 0.6, side: THREE.BackSide } });   // dusty-navy soft-goods band, not lacquered toy blue
@@ -279,13 +279,14 @@ export class Hab {
     }
     this.circles.push({ x: 0, z: GZ, r: 1.25 });
 
-    // dust tracked in through both airlocks: a heavy footprint at each threshold, a scuffed path worn towards the galley
+    // dust tracked in through both airlocks: a distinct footprint at each threshold, a faint scuffed path
+    // towards the galley (kept lighter: a working hab gets vacuumed, it is not a dust pit)
     for (const sgn of [1, -1]) {
-      const th = dustDecal(2.3, 1.55, 1.0); th.position.set(sgn * (R - 1.15), 0.037, 0); th.rotation.y = sgn > 0 ? 0 : Math.PI; this.root.add(th);
-      const path = dustDecal(2.6, 0.95, 0.34); path.position.set(sgn * (R - 2.6), 0.037, sgn * 0.3); path.rotation.y = sgn > 0 ? -0.25 : Math.PI + 0.25; this.root.add(path);
+      const th = dustDecal(2.3, 1.55, 0.72); th.position.set(sgn * (R - 1.15), 0.037, 0); th.rotation.y = sgn > 0 ? 0 : Math.PI; this.root.add(th);
+      const path = dustDecal(2.6, 0.95, 0.2); path.position.set(sgn * (R - 2.6), 0.037, sgn * 0.3); path.rotation.y = sgn > 0 ? -0.25 : Math.PI + 0.25; this.root.add(path);
     }
-    const wear = dustDecal(3.2, 2.4, 0.3); wear.position.set(0, 0.037, GZ - 0.2); this.root.add(wear);   // worn patch under the galley table stools
-    { const rp = rackTh, rr = 5.2 + DR, dust = dustDecal(2.9, 1.5, 0.38); dust.position.set(rr * Math.cos(rp), 0.037, rr * Math.sin(rp)); dust.rotation.y = -rp; this.root.add(dust); }   // boot-worn spot in front of the suit rack
+    const wear = dustDecal(3.2, 2.4, 0.18); wear.position.set(0, 0.037, GZ - 0.2); this.root.add(wear);   // worn patch under the galley table stools
+    { const rp = rackTh, rr = 5.2 + DR, dust = dustDecal(2.9, 1.5, 0.22); dust.position.set(rr * Math.cos(rp), 0.037, rr * Math.sin(rp)); dust.rotation.y = -rp; this.root.add(dust); }   // boot-worn spot in front of the suit rack
 
     // ---- dressing: lab equipment, bedding, galley fittings, stool backs, safety gear, exposed pipe and duct runs ----
     {
