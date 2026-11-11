@@ -40,14 +40,52 @@ function craters(x: number, z: number, from = 0) {
 
 type Dem = { n: number; res: number; half: number; data: Int16Array; scale: number };
 let dem: Dem | null = null;
-function demAt(x: number, z: number): number | null {
-  if (!dem) return null;
-  const { n, res, half, data, scale } = dem;
-  // beyond the tile the edge value is extended, so the far field stays continuous with the real relief
+let demFar: Dem | null = null;
+
+/** Strict bilinear sample of one DEM tile. Returns null when (x,z) is outside the tile's true bounds
+ *  (no edge extension). The blend layer in `demAt()` decides what to do in that case. */
+function sampleDem(d: Dem, x: number, z: number): number | null {
+  const { n, res, half, data, scale } = d;
+  const fx = (x + half) / res, fz = (z + half) / res;
+  if (fx < 0 || fz < 0 || fx > n - 1 || fz > n - 1) return null;
+  const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j;
+  const a = data[j * n + i], b = data[j * n + i + 1], c = data[(j + 1) * n + i], dd = data[(j + 1) * n + i + 1];
+  return (a + u * (b - a) + v * (c - a + u * (a - b - c + dd))) * scale;
+}
+
+/** Legacy edge-extended sample (clamps to the tile border). Used as a fallback when only one DEM is present,
+ *  preserving the original single-tile behaviour. */
+function sampleDemClamped(d: Dem, x: number, z: number): number {
+  const { n, res, half, data, scale } = d;
   const fx = Math.min(n - 1.001, Math.max(0, (x + half) / res)), fz = Math.min(n - 1.001, Math.max(0, (z + half) / res));
   const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j;
-  const a = data[j * n + i], b = data[j * n + i + 1], c = data[(j + 1) * n + i], d = data[(j + 1) * n + i + 1];
-  return (a + u * (b - a) + v * (c - a + u * (a - b - c + d))) * scale;
+  const a = data[j * n + i], b = data[j * n + i + 1], c = data[(j + 1) * n + i], dd = data[(j + 1) * n + i + 1];
+  return (a + u * (b - a) + v * (c - a + u * (a - b - c + dd))) * scale;
+}
+
+// Blend zone between the near (high-res) tile and the far (wide-coverage) tile.
+// Inside BLEND_INNER metres of the hab: pure near tile. Outside BLEND_OUTER: pure far tile.
+// Between the two: smoothstep blend, so the handoff from 5 m/px detail to 20 m/px context has no visible seam.
+const BLEND_INNER = 4500, BLEND_OUTER = 5500;
+
+function demAt(x: number, z: number): number | null {
+  if (!dem && !demFar) return null;
+  if (dem && !demFar) return sampleDemClamped(dem, x, z);
+  if (!dem && demFar) return sampleDemClamped(demFar, x, z);
+
+  // Both DEMs present. The near tile covers ±5120 m; the far tile covers ±20480 m.
+  // Use strict bounds so the near tile does NOT edge-extend past its real data.
+  const r = Math.hypot(x, z);
+  if (r <= BLEND_INNER) return sampleDem(dem!, x, z);
+  if (r >= BLEND_OUTER) return sampleDem(demFar!, x, z);
+
+  const t = (r - BLEND_INNER) / (BLEND_OUTER - BLEND_INNER);
+  const ts = t * t * (3 - 2 * t); // smoothstep
+  const near = sampleDem(dem!, x, z);
+  const far = sampleDem(demFar!, x, z);
+  if (near === null) return far;
+  if (far === null) return near;
+  return near * (1 - ts) + far * ts;
 }
 
 function rawHeight(x: number, z: number): number {
@@ -70,8 +108,11 @@ export function heightAt(x: number, z: number): number {
 
 type V3 = { x: number; y: number; z: number };
 export function isSunlit(p: V3, sun: V3): boolean {
-  const far = dem ? 5000 : 1500;
-  for (let t = 4; t < far; t += t < 200 ? 2 : t < 1000 ? 8 : 25) {
+  // With the far DEM in place, the shadow ray can travel across the full Shackleton bowl to the opposite rim,
+  // so a hab on the inner wall correctly sees the far wall block the sun at low angles. Without it, the ray
+  // only reaches 5 km (the near-tile half-width), which makes the hab look lit when it shouldn't be.
+  const far = demFar ? 20000 : dem ? 5000 : 1500;
+  for (let t = 4; t < far; t += t < 200 ? 2 : t < 1000 ? 8 : t < 5000 ? 20 : 50) {
     if (heightAt(p.x + sun.x * t, p.z + sun.z * t) > p.y + sun.y * t) return false;
   }
   return true;
@@ -88,7 +129,9 @@ export type Site = { lat: number; lon: number; elevM: number; craterDir: { x: nu
 let site: Site | null = null;
 export const getSite = () => site;
 
-/** Load the baked LOLA tile if one is deployed. Returns a short status for the boot screen. */
+/** Load the baked LOLA tiles if deployed. The near tile (5 m/px) supplies the immediate relief around the hab;
+ *  an optional far tile (e.g. 20 m/px, `shackleton-far.{json,bin}`) supplies the wider regional context so the far
+ *  crater wall and floor are real LOLA data instead of edge-extended flatness. Returns a short status for the boot screen. */
 export async function loadTerrain(): Promise<string> {
   try {
     const m = await fetch('/terrain/shackleton.json', { signal: AbortSignal.timeout(10000) });
@@ -103,7 +146,29 @@ export async function loadTerrain(): Promise<string> {
       site = { lat: meta.lat, lon: meta.lon, elevM: meta.siteElevationM ?? 0, litFraction: meta.litFraction ?? null,
         craterDir: Number.isFinite(meta.craterDir?.x) && Number.isFinite(meta.craterDir?.z) ? meta.craterDir : null };
     }
-    return `LOLA DEM \u00b7 ${meta.res} M/PX`;
+
+    // Optional companion far tile. Failure here is non-fatal: the near tile still works on its own,
+    // it just edge-extends past its border as before.
+    try {
+      const mf = await fetch('/terrain/shackleton-far.json', { signal: AbortSignal.timeout(10000) });
+      if (mf.ok) {
+        const metaF = await mf.json();
+        const bf = await fetch('/terrain/shackleton-far.bin', { signal: AbortSignal.timeout(60000) });
+        if (bf.ok) {
+          const dataF = new Int16Array(await bf.arrayBuffer());
+          if (metaF.n > 2 && metaF.res > 0 && metaF.scale > 0 && dataF.length === metaF.n * metaF.n) {
+            setDemFar(dataF, metaF.n, metaF.res, metaF.scale);
+            // Prefer the near tile's litFraction (the far bake skips the rim scan).
+            if (site && (metaF.litFraction === null || metaF.litFraction === undefined) && Number.isFinite(meta.litFraction)) {
+              // keep site.litFraction as-is
+            }
+          }
+        }
+      }
+    } catch { /* far tile optional */ }
+
+    const farRes = demFar ? `+${demFar.res}M` : '';
+    return `LOLA DEM \u00b7 ${meta.res} M/PX${farRes ? ' ' + farRes : ''}`;
   } catch { return 'PROCEDURAL'; }
 }
 /**
@@ -128,4 +193,11 @@ export function fillNoData(data: Int16Array, n: number) {
 export function setDem(data: Int16Array, n: number, res: number, scale: number) {
   fillNoData(data, n);
   dem = { n, res, half: (n * res) / 2, data, scale }; H0 = rawHeight(0, 0);
+}
+/** Companion wide-coverage DEM (coarser resolution, e.g. 20 m/px LOLA covering ~40 km).
+ *  Loaded alongside the primary near-field DEM so the far relief (e.g. the opposite Shackleton rim)
+ *  is real LOLA data instead of edge-extended flatness. */
+export function setDemFar(data: Int16Array, n: number, res: number, scale: number) {
+  fillNoData(data, n);
+  demFar = { n, res, half: (n * res) / 2, data, scale };
 }
