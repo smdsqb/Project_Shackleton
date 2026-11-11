@@ -3,7 +3,8 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import type { Sim } from './sim';
 import { buildSuit } from './suit';
 import { oxygenator, atmosReg, waterReclaimer, co2Scrubber, extinguisher } from './machines';
-import { NASA, panelTexture, tileTexture, crinkleTexture, meatball, worm, plateTexture, flagTexture } from './livery';
+import { NASA, panelTexture, tileTexture, crinkleTexture, meatball, worm, plateTexture, flagTexture, grainTexture, floorTextures } from './livery';
+import { wardrobe, medicalCabinet, firstAidKit, washroom, type Hinge } from './furnishings';
 
 // The Hab: a rigid, painted-aluminium surface habitat (drum + dome, ~155 m2 of floor) with a thermal-blanket skirt,
 // two airlocks with interlocked hatches, lab racks, oxygenator, atmospheric regulator and water reclaimer, and
@@ -21,10 +22,17 @@ const WINDOWS = [{ psi: -0.3 * Math.PI, y: 1.65 }, { psi: -0.9 * Math.PI, y: 1.7
 const WIN_R = 0.29;
 type Door = { open: boolean; vis?: boolean; k: number; pivot: THREE.Group; lamp: THREE.MeshBasicMaterial; dir: number };
 type Lock = { name: string; ang: number; ca: number; sa: number; p: number; cyc: number | null; inner: Door; outer: Door };
-type Item = { x: number; z: number; reach: number; text: () => string; run: () => string };
+type Item = { x: number; z: number; reach: number; text: () => string; run: () => string; alt?: { text: () => string; run: () => string } };
+type HS = { h: Hinge; k: number; want: boolean };
+type Cabin = { th: number; r0: number; xa: number; xb: number; hw: number; dw: number; door: HS };
+/** Collision circles for the hygiene compartment, shared with the crew so nobody walks through it. */
+export const WASH_CIRCLES = [-0.65, 0.05].flatMap((lx) => [-0.45, 0.45].map((lz) => { const th = 0.9 * Math.PI, c = Math.cos(th), sn = Math.sin(th); return { x: 6.5 * c + lx * c - lz * sn, z: 6.5 * sn + lx * c * 0 + lx * sn + lz * c, r: 0.85 }; }));
 
-const mat = (c: number, glow = false, rough = 0.55, metal = 0.1) =>
-  new THREE.MeshStandardMaterial({ color: c, roughness: rough, metalness: metal, ...(glow ? { emissive: c, emissiveIntensity: 1.2 } : {}) });
+const mat = (c: number, glow = false, rough = 0.55, metal = 0.1) => {
+  const m = new THREE.MeshStandardMaterial({ color: c, roughness: rough, metalness: metal, ...(glow ? { emissive: c, emissiveIntensity: 1.2 } : {}) });
+  if (!glow) { m.color.offsetHSL(0, -0.1, -0.012); m.roughnessMap = grainTexture(); m.bumpMap = grainTexture(); m.bumpScale = 0.35; }   // slightly muted colour and a fine grain, so nothing looks like flat toy plastic
+  return m;
+};
 const rbox = (w: number, h: number, d: number, r = 0.04) => new RoundedBoxGeometry(w, h, d, 3, Math.max(0.002, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001)));
 function label(text: string, w = 0.55) {
   return new THREE.Mesh(new THREE.PlaneGeometry(w, (w * 96) / 512), new THREE.MeshBasicMaterial({ map: plateTexture(text) }));
@@ -74,7 +82,11 @@ export class Hab {
   taskLabel = ''; taskProgress = 0; onComms: (() => void) | null = null;
   shelter = false; // set while the player is in a pressurised vehicle
   get suitOn() { return this.suitState === 'on'; }
-  get busy() { return this.suitState === 'donning' || this.suitState === 'doffing'; }
+  held: 'extinguisher' | null = null; spraying = false;
+  get busy() { return this.suitState === 'donning' || this.suitState === 'doffing' || this.action !== null; }
+  private extCharge = 100; private sprayT = 0; private extGroup: THREE.Object3D | null = null; private kitStock = 20; private simRef: Sim | null = null;
+  private hinges: HS[] = []; private cabins: Cabin[] = []; private occ: THREE.MeshStandardMaterial | null = null;
+  private action: { label: string; t: number; dur: number; done: () => string } | null = null;
   private suitT = 0; private suitStage = -1; private suitMeshes: THREE.Group[] = []; private suitTaken: THREE.Group | null = null;
   private lights: { l: THREE.PointLight; base: number; color: number }[] = []; private glows: { m: THREE.MeshStandardMaterial; base: number }[] = []; private clock = 0; private powerK = 1;
   private locks: Lock[] = []; private fans: THREE.Object3D[] = []; private circles: { x: number; z: number; r: number }[] = [];
@@ -116,18 +128,15 @@ export class Hab {
     for (let i = 0; i < 8; i++) { const t = mesh(new THREE.TorusGeometry(R - 0.07, 0.05, 10, 48, P), rib, 0, WALL_H, 0); t.scale.y = CAP_H / R; t.rotation.y = (i * P) / 8; }
 
     // floor (tiled composite decking) and the soft ceiling light ring
-    mesh(new THREE.CircleGeometry(R - 0.06, 64).rotateX(-P / 2), new THREE.MeshStandardMaterial({ map: tileTexture('#a3a9b2', '#7d848e', 12), roughness: 0.8 }), 0, 0.03, 0);
+    { const ft = floorTextures(11.7); mesh(new THREE.CircleGeometry(R - 0.06, 64).rotateX(-P / 2), new THREE.MeshStandardMaterial({ map: ft.map, bumpMap: ft.bump, bumpScale: 1.4, roughness: 0.68, metalness: 0.03 }), 0, 0.03, 0); }
     const glowM = (c: number, k = 1.1) => { const m = new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: k, roughness: 0.4 }); this.glows.push({ m, base: k }); return m; };
-    mesh(new THREE.TorusGeometry(3 * K, 0.05, 12, 64).rotateX(P / 2), glowM(0xe6eeff, 0.9), 0, 3.5, 0);
-    mesh(new THREE.TorusGeometry(1.2 * K, 0.04, 12, 48).rotateX(P / 2), glowM(0xffe2bd, 0.6), 0, 3.75, 0);
+    mesh(new THREE.TorusGeometry(3 * K, 0.05, 12, 64).rotateX(P / 2), glowM(0xe6eeff, 0.5), 0, 3.5, 0);
+    mesh(new THREE.TorusGeometry(1.2 * K, 0.04, 12, 48).rotateX(P / 2), glowM(0xffe2bd, 0.32), 0, 3.75, 0);
     // lighting plan: cool general light, cooler task light over the lab, warm light at the galley and bunks, a cyan wash at the comms desk
-    const lamp = (c: number, i: number, dist: number, x: number, y: number, z: number, sh = false) => { const l = new THREE.PointLight(c, i, dist, 2); if (sh) { l.castShadow = true; l.shadow.mapSize.set(1024, 1024); l.shadow.bias = -0.002; l.shadow.normalBias = 0.03; l.shadow.radius = 3; } l.position.set(x, y, z); this.root.add(l); this.lights.push({ l, base: i, color: c }); };
-    lamp(0xe4ecff, 22, 15, 0, 3.4, 0, true);
-    for (const x of [-2, 0, 2]) lamp(0xd2e4ff, 8, 6, x * K, 2.5, -1.6 * K);
-    lamp(0xffd6a6, 11, 7, 0, 2.5, GZ, true);
-    lamp(0xffcf9a, 6, 6, 0, 2.3, 3.6 * K);
-    lamp(0x9fe4ff, 5, 5.5, -3.5 * K, 2.0, -1.2 * K);
-    lamp(0xffe9d6, 5, 6, 2.4 * K, 2.2, -3.2 * K);
+    const lamp = (c: number, i: number, dist: number, x: number, y: number, z: number, sh = false) => { const l = new THREE.PointLight(c, i, dist, dist === 0 ? 1.4 : 2); if (sh) { l.castShadow = true; l.shadow.mapSize.set(1024, 1024); l.shadow.bias = -0.002; l.shadow.normalBias = 0.03; l.shadow.radius = 3; } l.position.set(x, y, z); this.root.add(l); this.lights.push({ l, base: i, color: c }); };
+    for (let i = 0; i < 8; i++) { const a = ((i + 0.5) * P) / 4; lamp(0xf1f4fa, 4.5, 0, 3.9 * K / 1.3 * Math.cos(a), 3.3, 3.9 * K / 1.3 * Math.sin(a), i % 4 === 0); }   // even LED ring in the ceiling: no hot spot under the player
+    for (const x of [-2, 0, 2]) lamp(0xdfe9f7, 3, 5, x * K, 2.5, -1.6 * K);   // task lights over the benches
+    lamp(0xffe2bd, 3.5, 5, 0, 2.5, GZ);                                          // galley
 
     // ---- portholes, decals, livery ----
     const trim2 = mat(0xb9bfc8, false, 0.3, 0.6), sleeveM = new THREE.MeshStandardMaterial({ color: 0xb9bfc8, roughness: 0.4, metalness: 0.5, side: THREE.DoubleSide });
@@ -185,7 +194,7 @@ export class Hab {
     }
     mesh(rbox(0.3, 0.025, 0.55, 0.01), mat(0x2a3038), -0.22, 0.915, 0, ops);
     mesh(new THREE.TorusGeometry(0.11, 0.015, 8, 20, P), mat(0x20262e), -0.25, 0.98, 0.8, ops);
-    fit(-0.3 * P, { w: 2.0, h: 0.95, color: 0xdfe3e8, text: 'GALLEY' }); fit(0.9 * P, { w: 1.4, h: 1.4, color: 0xf6f7f9, text: 'MEDICAL', accent: NASA.red });
+    fit(-0.3 * P, { w: 2.0, h: 0.95, color: 0xdfe3e8, text: 'GALLEY' });
     for (const th of [0.28 * P, 0.5 * P, 0.72 * P]) {
       fit(th, { w: 2.0, h: 0.5, y: 0.25, d: 0.95, color: 0xc4ceda, accent: null }); fit(th, { w: 2.0, h: 0.5, y: 1.3, d: 0.95, color: 0xc4ceda, accent: null });
       this.curtains.push(fit(th, { w: 2.0, h: 1.9, d: 0.04, r: 4.35, color: 0x2c5aa0, accent: null, text: th === 0.5 * P ? 'CREW QUARTERS' : undefined }));
@@ -259,9 +268,15 @@ export class Hab {
         mesh(rbox(0.3, 0.015, 0.2, 0.006), mat(0xcfd5dc, false, 0.5, 0.1), 0.55 * c, 0.785, GZ + 0.55 * sn, this.root, true).rotation.y = -a;
         mesh(new THREE.CylinderGeometry(0.035, 0.03, 0.09, 12), mat([0xe8832a, 0x2f6fd0, 0xeef1f4, 0xc0392b, 0x2f9d58][i], false, 0.4, 0), 0.72 * c, 0.82, GZ + 0.72 * sn, this.root, true);
       }
-      { const eg = at(0.12 * P, R - 0.3); eg.add(extinguisher());   // safety gear beside Airlock 1
-        mesh(rbox(0.05, 0.3, 0.42, 0.02), wh, 0.1, 1.25, 0.7, eg, true); mesh(rbox(0.006, 0.2, 0.05, 0.002), mat(0xc0392b, true), 0.07, 1.25, 0.7, eg); mesh(rbox(0.006, 0.05, 0.2, 0.002), mat(0xc0392b, true), 0.07, 1.25, 0.7, eg);
-        mesh(rbox(0.06, 0.26, 0.3, 0.02), mat(0xe6c229, false, 0.5, 0.1), 0.1, 1.25, -0.7, eg, true);
+      { const th = 0.12 * P, rr = R - 0.3, eg = at(th, rr);   // safety gear beside Airlock 1: extinguisher, first-aid kit, oxygen masks
+        const ex = extinguisher(); ex.position.set(0.2, 0, -0.12); eg.add(ex); this.extGroup = ex;
+        const fk = firstAidKit(), fkS = this.hs(fk.lid); fk.g.position.set(0.24, 1.25, 0.62); eg.add(fk.g);
+        mesh(rbox(0.06, 0.26, 0.3, 0.02), mat(0xe6c229, false, 0.5, 0.1), 0.22, 1.25, -0.62, eg, true);
+        this.reg(th, rr, -0.95, -0.12, 1.5, () => (this.held ? '[E] RETURN FIRE EXTINGUISHER' : '[E] TAKE FIRE EXTINGUISHER'),
+          () => { if (this.held) { this.held = null; ex.visible = true; return 'EXTINGUISHER RETURNED TO ITS BRACKET'; } this.held = 'extinguisher'; ex.visible = false; return 'EXTINGUISHER IN HAND · [F] TO DISCHARGE'; },
+          { text: () => (this.held ? '[F] DISCHARGE' : '[F] CHECK GAUGE'), run: () => (this.held ? this.discharge() : `EXTINGUISHER CHARGE ${Math.round(this.extCharge)} %`) });
+        this.reg(th, rr, -0.95, 0.62, 1.5, () => `[E] ${fkS.want ? 'CLOSE' : 'OPEN'} FIRST-AID KIT`, () => ((fkS.want = !fkS.want) ? 'FIRST-AID KIT OPEN' : 'FIRST-AID KIT CLOSED'),
+          { text: () => '[F] TREAT MINOR INJURY', run: () => { if (!fkS.want) return 'OPEN THE KIT FIRST'; this.startAction('TREATING · CLEAN, DRESS, TAPE', 6, () => { this.kitStock = Math.max(0, this.kitStock - 1); return `DRESSING APPLIED · KIT STOCK ${this.kitStock} / 20`; }); return ''; } });
       }
       const run = (th0: number, th1: number, y: number, rr: number, rad: number, color: number) => {   // exposed pipes and ducts along the wall
         const pts: THREE.Vector3[] = []; for (let i = 0; i <= 28; i++) { const t = th0 + ((th1 - th0) * i) / 28; pts.push(new THREE.Vector3(rr * Math.cos(t), y, rr * Math.sin(t))); }
@@ -270,6 +285,45 @@ export class Hab {
       };
       run(-0.77 * P, -0.44 * P, 2.02, R - 0.14, 0.028, 0x2f6fd0); run(-0.65 * P, -0.44 * P, 2.1, R - 0.14, 0.022, 0x2f9d58); run(-0.9 * P, -0.35 * P, 2.12, R - 0.38, 0.1, 0x9aa1ab);
       for (const dy of [0, 0.04, 0.08]) run(-0.9 * P, -0.35 * P, 1.97 + dy, R - 0.1, 0.012, 0x14171b);
+    }
+    // ---- crew furnishings you can open and use: wardrobe, medical cabinet, hygiene compartment, and every other fitting ----
+    {
+      const place = (th: number, r: number, g: THREE.Object3D, text?: string, ly = 2.12, lw = 0.8) => {
+        const o = new THREE.Group(); o.position.set(r * Math.cos(th), 0, r * Math.sin(th)); o.rotation.y = -th; this.root.add(o); o.add(g);
+        if (text) { const l = label(text, lw); l.position.set(-0.33, ly, 0); l.rotation.y = -P / 2; o.add(l); } return o;
+      };
+      const r0 = 4.9 + DR, sim = () => this.simRef, toggle = (hs: HS[]) => { const to = !hs[0].want; for (const s of hs) s.want = to; return to; };
+      const noSuit = () => (this.suitOn ? 'TAKE THE EVA SUIT OFF FIRST' : '');
+      const wd = wardrobe(), wdH = wd.doors.map((d) => this.hs(d)), WT = 0.815 * P, WR = R - 0.34; place(WT, WR, wd.g, 'CREW STOWAGE', 2.12, 0.9);
+      this.reg(WT, WR, -0.7, 0, 1.6, () => `[E] ${wdH[0].want ? 'CLOSE' : 'OPEN'} WARDROBE`, () => (toggle(wdH) ? 'WARDROBE OPEN' : 'WARDROBE CLOSED'),
+        { text: () => '[F] CHANGE CLOTHES', run: () => { const e = noSuit(); if (e) return e; if (!wdH[0].want) return 'OPEN THE WARDROBE FIRST'; this.startAction('CHANGING INTO CLEAN COVERALLS', 7, () => 'FRESH COVERALLS ON · PERSONAL ITEMS STOWED'); return ''; } });
+      const mc = medicalCabinet(), mcH = mc.doors.map((d) => this.hs(d)), MT = -0.382 * P, MR = R - 0.22; place(MT, MR, mc.g, 'MEDICAL', 2.0, 0.7);
+      this.reg(MT, MR, -0.7, 0, 1.6, () => `[E] ${mcH[0].want ? 'CLOSE' : 'OPEN'} MEDICAL CABINET`, () => (toggle(mcH) ? 'MEDICAL CABINET OPEN' : 'MEDICAL CABINET CLOSED'),
+        { text: () => '[F] CHECK CREW VITALS', run: () => { if (!mcH[0].want) return 'OPEN THE CABINET FIRST'; this.startAction('VITALS CHECK · PULSE, SPO2, TEMPERATURE', 5, () => `CREW VITALS NOMINAL · CUMULATIVE DOSE ${(sim()?.doseMsv ?? 0).toFixed(2)} mSv`); return ''; } });
+      // hygiene compartment: closed cabin with a door, waste collector, shower, basin; its collision and light are set up here
+      const ws = washroom(), wsH = this.hs(ws.door), HT = 0.9 * P; place(HT, 6.5, ws.g);
+      { const l = label('HYGIENE', 0.6); const [lx, lz] = this.wp(HT, 6.5, -1.235, 0); l.position.set(lx, 2.1, lz); l.rotation.y = -HT - P / 2; this.root.add(l); }
+      this.cabins.push({ th: HT, r0: 6.5, xa: ws.size.X0, xb: ws.size.X1, hw: ws.size.W / 2, dw: ws.size.DW, door: wsH }); this.occ = ws.occ;
+      { const pl = new THREE.PointLight(0xfff3e4, 3.2, 4, 2), [lx, lz] = this.wp(HT, 6.5, -0.45, 0); pl.position.set(lx, 2.0, lz); this.root.add(pl); this.lights.push({ l: pl, base: 3.2, color: 0xfff3e4 }); }
+      const closed = () => (wsH.want ? 'CLOSE THE DOOR FIRST' : '');
+      this.reg(HT, 6.5, -1.5, 0, 1.9, () => `[E] ${wsH.want ? 'CLOSE' : 'OPEN'} DOOR`, () => (toggle([wsH]) ? 'DOOR OPEN' : 'DOOR CLOSED'));
+      this.reg(HT, 6.5, -0.15, -0.45, 1.0, () => '[E] TAKE A SHOWER', () => { const e = closed() || noSuit(); if (e) return e; this.startAction('SHOWER · WATER FROM THE RECYCLED LOOP', 10, () => { sim()?.spend(0, 0.2); return 'SHOWER DONE · 3.5 L USED, ALL RECLAIMED BY THE WATER LOOP'; }); return ''; });
+      this.reg(HT, 6.5, 0.0, 0.45, 0.95, () => '[E] USE THE WASTE COLLECTOR', () => { const e = closed() || noSuit(); if (e) return e; this.startAction('WASTE COLLECTOR · SUCTION ON', 5, () => { sim()?.spend(0, 0.05); return 'DONE · WASTE STORED, WATER RECLAIMED'; }); return ''; });
+      this.reg(HT, 6.5, -0.72, 0.3, 0.95, () => '[E] WASH HANDS', () => { const e = noSuit(); if (e) return e; this.startAction('WASHING HANDS', 3, () => 'CLEAN · WATER FROM THE RECOVERY LOOP'); return ''; });
+      // life support racks: a live status line each
+      const mach = (th: number, name: string, info: () => string) => this.reg(th, r0, -0.95, 0, 1.5, () => `[E] INSPECT ${name}`, info);
+      mach(-0.44 * P, 'OXYGEN GENERATION', () => `OXYGEN GENERATION · ${sim()?.on.oxygenator ? 'ONLINE' : 'OFF'} · TANK ${(sim()?.o2Kg ?? 0).toFixed(0)} KG · STACK ${Math.round((sim()?.oxyHealth ?? 1) * 100)} %`);
+      mach(-0.54 * P, 'CO2 REMOVAL', () => `CO2 REMOVAL · ${sim()?.on.scrubber ? 'ONLINE' : 'OFF'} · BED ${Math.round((sim()?.scrubberHealth ?? 1) * 100)} % · CABIN CO2 ${(sim()?.co2 ?? 0).toFixed(1)} mmHg`);
+      mach(-0.65 * P, 'ATMOSPHERE CONTROL', () => `ATMOSPHERE CONTROL · CABIN ${(sim()?.pressureKpa ?? 101.3).toFixed(1)} kPa · ${(sim()?.tempC ?? 22).toFixed(0)} °C`);
+      mach(-0.77 * P, 'WATER RECOVERY', () => `WATER RECOVERY · ${sim()?.on.water ? 'ONLINE' : 'OFF'} · TANK ${(sim()?.waterKg ?? 0).toFixed(0)} KG`);
+      // lab benches, galley and bunks
+      const zt = -1.6 * K, bench = (x: number, name: string, lab: string, dur: number, done: string, cost = 0.03) => this.items.push({ x, z: zt + 0.75, reach: 1.25, text: () => `[E] ${name}`, run: () => { const e = noSuit(); if (e) return e; this.startAction(lab, dur, () => { sim()?.spend(0, cost); return done; }); return ''; } });
+      bench(-2 * K, 'USE MICROSCOPE', 'EXAMINING REGOLITH SAMPLE 07', 6, 'SAMPLE 07 · ANGULAR GLASSY GRAINS, MINOR AGGLUTINATES');
+      bench(0, 'WORK IN THE GLOVE BOX', 'GLOVE BOX · HANDLING A SEALED SAMPLE', 7, 'SAMPLE RESEALED UNDER NITROGEN PURGE');
+      bench(2 * K, 'RUN THE SPECTROMETER', 'SPECTROMETER RUN · INTEGRATING', 7, 'SPECTRA LOGGED · ILMENITE AND ANORTHITE, NOTHING UNEXPECTED', 0.06);
+      this.reg(-0.3 * P, r0, -0.45, 0.45, 1.3, () => '[E] HEAT A MEAL', () => { const e = noSuit(); if (e) return e; this.startAction('FOOD WARMER · HEATING A MEAL', 8, () => { sim()?.spend(0, 0.05); return 'MEAL HEATED · ENJOY'; }); return ''; });
+      this.reg(-0.3 * P, r0, -0.45, -0.4, 1.2, () => '[E] DRINK AT THE TAP', () => { const e = noSuit(); if (e) return e; this.startAction('DRINKING WATER', 3, () => 'WATER FROM THE RECOVERY LOOP · TASTES LIKE WATER'); return ''; });
+      for (const th of [0.28 * P, 0.5 * P, 0.72 * P]) this.reg(th, r0, -0.9, 0, 1.4, () => '[E] LIE DOWN AND REST', () => { const e = noSuit(); if (e) return e; this.startAction('RESTING IN THE BUNK', 8, () => 'RESTED · FEELING BETTER'); return ''; });
     }
     // airlocks: curved-roof, sealed tunnels with an inner and an outer hatch
     this.locks = [this.makeLock('AIRLOCK 1', 0), this.makeLock('AIRLOCK 2', Math.PI)];
@@ -359,6 +413,12 @@ export class Hab {
       if (u > R_IN - 0.3 && u < HAB_R + 0.25 && av < 0.7) lane = true;
     }
     if (!lane && r > R_IN && r < HAB_R + 0.25) return true;
+    for (const c of this.cabins) {
+      const [lx, lz] = this.cabinLocal(c, x, z); if (lx < c.xa - 0.12 || lx > c.xb || Math.abs(lz) > c.hw + 0.12) continue;
+      if (lx > c.xa + 0.1 && Math.abs(lz) < c.hw - 0.08) { if (Math.hypot(lx - 0.12, lz - 0.52) < 0.34) return true; continue; }   // inside: free, except the toilet
+      if (lx < c.xa + 0.16 && Math.abs(lz) < c.dw && c.door.k > 0.6) continue;                                                      // the door gap, once the door is open
+      return true;
+    }
     return this.circles.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + PR);
   }
   inHab(x: number, z: number) { return Math.hypot(x, z) < HAB_R - 0.2; }
@@ -376,7 +436,20 @@ export class Hab {
     return false;
   }
 
-  press() { if (this.best) { this.toast = this.best.run(); this.toastT = 2.8; } }
+  private hs(h: Hinge): HS { const s = { h, k: 0, want: false }; this.hinges.push(s); return s; }
+  private wp(th: number, r: number, lx: number, lz: number): [number, number] { const c = Math.cos(th), sn = Math.sin(th); return [r * c + lx * c - lz * sn, r * sn + lx * sn + lz * c]; }
+  private reg(th: number, r: number, lx: number, lz: number, reach: number, text: () => string, run: () => string, alt?: { text: () => string; run: () => string }) { const [x, z] = this.wp(th, r, lx, lz); this.items.push({ x, z, reach, text, run, alt }); }
+  private startAction(label: string, dur: number, done: () => string) { if (!this.action) this.action = { label, t: 0, dur, done }; }
+  private cabinLocal(c: Cabin, x: number, z: number): [number, number] { const dx = x - c.r0 * Math.cos(c.th), dz = z - c.r0 * Math.sin(c.th), cs = Math.cos(c.th), sn = Math.sin(c.th); return [dx * cs + dz * sn, -dx * sn + dz * cs]; }
+
+  press() { if (this.action) return; if (this.best) { this.toast = this.best.run(); this.toastT = 2.8; } }
+  /** Secondary key (F): the extra action of whatever you are facing, or the extinguisher if you are holding it. */
+  press2() {
+    if (this.action) return;
+    if (this.best?.alt) { this.toast = this.best.alt.run(); this.toastT = 2.8; return; }
+    if (this.held === 'extinguisher') { const t = this.discharge(); if (t) { this.toast = t; this.toastT = 2.4; } }
+  }
+  private discharge() { if (this.spraying) return ''; if (this.extCharge <= 0) return 'EXTINGUISHER EMPTY'; this.spraying = true; this.sprayT = 2.2; return ''; }
 
   update(dt: number, dtSim: number, p: THREE.Vector3, sim: Sim, look?: THREE.Vector3) {
     this.clock += dt;
@@ -387,7 +460,11 @@ export class Hab {
     const pulse = this.alarm ? 0.6 + 0.4 * Math.sin(this.clock * 6) : 1; // fire / battery alarm: red lights pulsing
     for (const { l, base, color } of this.lights) { l.intensity = base * this.powerK * wander * pulse * (1 - this.flicker * (0.55 + 0.45 * Math.sin(this.clock * 41) * Math.sin(this.clock * 13))); l.color.setHex(this.powerK < 0.3 || this.alarm ? 0xff3b2a : color); }
     for (const { m, base } of this.glows) m.emissiveIntensity = base * Math.min(1, this.powerK * 1.1);
-    this.stepSuit(dt, sim);
+    this.stepSuit(dt, sim); this.simRef = sim;
+    for (const s of this.hinges) { s.k = Math.min(1, Math.max(0, s.k + (s.want ? 1 : -1) * dt * 1.5)); s.h.pivot.rotation[s.h.axis] = s.h.open * (s.k * s.k * (3 - 2 * s.k)); }
+    if (this.action) { const a = this.action; a.t += dt; this.taskProgress = Math.min(1, a.t / a.dur); this.taskLabel = a.label; if (a.t >= a.dur) { this.action = null; this.toast = a.done(); this.toastT = 3.6; this.taskLabel = ''; this.taskProgress = 0; } }
+    if (this.spraying) { this.sprayT -= dt; this.extCharge = Math.max(0, this.extCharge - dt * 11); if (this.sprayT <= 0 || this.extCharge <= 0) { this.spraying = false; this.toast = `EXTINGUISHER ${Math.round(this.extCharge)} % LEFT`; this.toastT = 2.4; } }
+    if (this.occ && this.cabins[0]) { const c = this.cabins[0], [lx, lz] = this.cabinLocal(c, p.x, p.z), inside = lx > c.xa + 0.05 && lx < c.xb && Math.abs(lz) < c.hw - 0.04, busy = inside && c.door.k < 0.3; this.occ.color.setHex(busy ? 0xc0392b : 0x2f9d58); this.occ.emissive.setHex(busy ? 0xc0392b : 0x2f9d58); }
     for (const f of this.fans) f.rotation.x += dt * 16 * this.powerK;
     for (const l of this.locks) {
       for (const d of [l.inner, l.outer]) {
@@ -418,7 +495,7 @@ export class Hab {
       if (look && lh > 0.2 && d > 0.55 && (dx * look.x + dz * look.z) / (d * lh) < 0.57) continue;
       if (d < bd) { best = i; bd = d; }
     }
-    this.best = best; this.prompt = best ? best.text() : '';
+    this.best = best; this.prompt = best ? best.text() + (best.alt ? '   ' + best.alt.text() : '') : this.held === 'extinguisher' ? '[F] DISCHARGE EXTINGUISHER' : '';
   }
 
   /** 0 = clear portholes, 1 = dust-caked and opaque, from both sides */
@@ -429,7 +506,7 @@ export class Hab {
   }
 
   private stepSuit(dt: number, sim: Sim) {
-    if (!this.busy) { this.taskLabel = ''; this.taskProgress = 0; return; }
+    if (this.suitState !== 'donning' && this.suitState !== 'doffing') { if (!this.action) { this.taskLabel = ''; this.taskProgress = 0; } return; }
     const don = this.suitState === 'donning', total = don ? DON_S : DOFF_S, stages = don ? DON_STAGES : DOFF_STAGES;
     this.suitT += dt; const f = Math.min(1, this.suitT / total), st = Math.min(stages.length - 1, Math.floor(f * stages.length));
     this.taskProgress = f; this.taskLabel = `${don ? 'SUITING UP' : 'SUIT DOFF'} · ${stages[st]}`;

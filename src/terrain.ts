@@ -106,7 +106,26 @@ export async function loadTerrain(): Promise<string> {
     return `LOLA DEM \u00b7 ${meta.res} M/PX`;
   } catch { return 'PROCEDURAL'; }
 }
+/**
+ * The baked tile is a rotated square inside a square array, so its corners are "no data" zeros. Left alone they read as
+ * sea level next to terrain that is hundreds of metres lower, which makes fake cliff walls. Zero pixels connected to the
+ * array border are no-data: replace them with the nearest real height, softened, so the far field slopes on naturally.
+ */
+export function fillNoData(data: Int16Array, n: number) {
+  const bad = new Uint8Array(n * n), q = new Int32Array(n * n); let qh = 0, qt = 0;
+  const seed = (i: number) => { if (!bad[i] && data[i] === 0) { bad[i] = 1; q[qt++] = i; } };
+  for (let k = 0; k < n; k++) { seed(k); seed((n - 1) * n + k); seed(k * n); seed(k * n + n - 1); }
+  while (qh < qt) { const i = q[qh++], x = i % n, y = (i / n) | 0; if (x > 0) seed(i - 1); if (x < n - 1) seed(i + 1); if (y > 0) seed(i - n); if (y < n - 1) seed(i + n); }
+  if (qt === 0) return 0;
+  const src = new Int32Array(n * n).fill(-1); qh = qt = 0;   // breadth-first spread of the nearest valid pixel into the no-data area
+  for (let i = 0; i < n * n; i++) if (!bad[i]) { const x = i % n, y = (i / n) | 0; if ((x > 0 && bad[i - 1]) || (x < n - 1 && bad[i + 1]) || (y > 0 && bad[i - n]) || (y < n - 1 && bad[i + n])) { src[i] = i; q[qt++] = i; } }
+  const grow = (i: number, j: number) => { if (bad[j] && src[j] < 0) { src[j] = src[i]; data[j] = data[src[i]]; q[qt++] = j; } };
+  while (qh < qt) { const i = q[qh++], x = i % n, y = (i / n) | 0; if (x > 0) grow(i, i - 1); if (x < n - 1) grow(i, i + 1); if (y > 0) grow(i, i - n); if (y < n - 1) grow(i, i + n); }
+  for (let pass = 0; pass < 4; pass++) for (let y = 1; y < n - 1; y++) for (let x = 1; x < n - 1; x++) { const i = y * n + x; if (bad[i]) data[i] = (data[i - 1] + data[i + 1] + data[i - n] + data[i + n] + data[i]) / 5; }
+  let c = 0; for (let i = 0; i < n * n; i++) c += bad[i]; return c;
+}
 /** n x n grid, res metres per cell, centred on the site, heights in `scale` metre units relative to the site. */
 export function setDem(data: Int16Array, n: number, res: number, scale: number) {
+  fillNoData(data, n);
   dem = { n, res, half: (n * res) / 2, data, scale }; H0 = rawHeight(0, 0);
 }
