@@ -518,7 +518,6 @@ export class Bot {
     }
     this.pyAdd += (up - this.pyAdd) * min(1, dt * 12);
   }
-  private circles() { return this.eva ? PROPS.concat(extraObstacles(), [{ x: 0, z: 0, r: HAB_R + 1.3 }], WASH_CIRCLES) : ROOM; }
 
   update(dt: number, cam: THREE.Vector3) {
     this.t += dt; const T = this.t * this.spec.tempo + this.ph0, r = this.rig;
