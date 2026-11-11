@@ -15,9 +15,8 @@ export type SuitParts = { legL: THREE.Group; legR: THREE.Group; armL: THREE.Grou
 export function buildSuit(opts: { suited: boolean; shadowOnly?: boolean }): THREE.Group {
   const { suited, shadowOnly } = opts;
   const m = (c: number, rough = 0.7, metal = 0.03) => wornMat(c, rough >= 0.75 ? 'fabric' : 'paint', { rough, metal: 0.03, repeat: 1 });
-  // no two suits age the same: each one picks up a different amount of regolith grey (EVA suits famously
-  // turn dingy grey-brown after a few sorties; only a fresh one is white)
-  const dusty = (c: number) => new THREE.Color(c).lerp(new THREE.Color(0x8f887c), suited ? 0.18 + Math.random() * 0.26 : 0.04 + Math.random() * 0.08);
+  // clean fabrics: no regolith tint anywhere
+  const dusty = (c: number) => new THREE.Color(c);
   const fabric = m(dusty(suited ? 0xd9d7d2 : NASA.blue).getHex(), 0.85), hard = m(dusty(0xd8d9db).getHex(), 0.5, 0.05), joint = m(dusty(0x8d939b).getHex(), 0.8, 0.05), dark = m(0x23272d, 0.6, 0.1);
   const glove = m(dusty(suited ? 0xc9ccce : 0xb98563).getHex(), 0.85), boot = m(0x3b4048, 0.85), red = m(0xc8452c, 0.65), skin = m(0xb98563, 0.8);
   const root = new THREE.Group();

@@ -358,11 +358,9 @@ function frame() {
   const inRover = !!rover && rover.inside, inside = (hab ? hab.inHab(camera.position.x, camera.position.z) : false) || inRover;
   ambK += ((inside ? 0.1 : 0.19) - ambK) * Math.min(1, dt * 3); amb.intensity = ambK;
   storm.update(dt, camera.position, sim.lockdown?.storm ?? (sim.stormWarn ? 0.45 : 0), !inside);
-  ui.setHaze(storm.level * (inside ? 0 : 0.78));
   fx.update(running ? dt : 0, camera.position, sim); hab && (hab.flicker = Math.min(1, fx.shake * 1.1));
   const spR = sim.spe && sim.t >= sim.spe.arrive ? Math.min(1, sim.speRateUnshielded() / 8) : 0; ui.setRad(spR * (inside && sim.shelter ? 0.3 : 1), dt);
   crew?.setSymptom(sim.symptom?.kind ?? null, sim.symptom?.n ?? 0);
-  hab?.setShutters(storm.level);
 
   const px0 = camera.position.x, pz0 = camera.position.z;
   { const pu = crew?.takePush(); if (pu && (pu.x || pu.z) && !(hab && hab.blocked(camera.position.x + pu.x, camera.position.z + pu.z)) && !propBlocked(camera.position.x + pu.x, camera.position.z + pu.z)) { camera.position.x += pu.x; camera.position.z += pu.z; } }

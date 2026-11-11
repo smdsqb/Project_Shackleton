@@ -36,10 +36,9 @@ function noiseLayers(g: CanvasRenderingContext2D, S: number, r: () => number, oc
 }
 
 /** One painted aluminium panel (seams + rivets), tiled rx by ry times.
- *  1024 px with layered grunge: brushed streaks, multi-octave value noise, grime settled into the seams,
- *  domed rivets with their own highlight and shadow, faint drips and scuffs. Everything wraps seamlessly.
- *  `grime` scales the lived-in filth: 1 = exterior duty, ~0.4 for pressurised interiors that get wiped down. */
-export function panelTexture(base: string, seam: string, rx: number, ry: number, grime = 1) {
+ *  1024 px with brushed streaks, multi-octave value noise and domed rivets with their own highlight and
+ *  shadow. Everything wraps seamlessly. No grime, no dust: the outpost is kept clean. */
+export function panelTexture(base: string, seam: string, rx: number, ry: number) {
   const S = 1024, c = cv(S, S), g = c.getContext('2d')!, r = seeded(31);
   g.fillStyle = base; g.fillRect(0, 0, S, S);
   // brushed-metal grain: many faint horizontal strokes
@@ -51,17 +50,6 @@ export function panelTexture(base: string, seam: string, rx: number, ry: number,
   }
   // broad tonal variation (paint is never perfectly even)
   noiseLayers(g, S, r, [[3, 0.05], [7, 0.05], [16, 0.07], [48, 0.06]]);
-  // subtle vertical gravity drips from the rivet rows
-  for (let i = 0; i < 24; i++) {
-    const x = 20 + r() * (S - 40), y = r() * S * 0.5, w = 2 + r() * 5, h = 60 + r() * 260, a = (0.03 + r() * 0.05) * grime;
-    g.strokeStyle = `rgba(52,48,44,${a})`; g.lineWidth = w;
-    wrap9(g, S, (ox, oy) => { g.beginPath(); g.moveTo(x + ox, y + oy); g.lineTo(x + ox + (r() - 0.5) * 8, y + oy + h); g.stroke(); });
-  }
-  // grime that settles along the seam lines (a soft dark band on every edge)
-  for (const [m, a] of [[10, 0.16 * grime], [26, 0.07 * grime]] as const) {
-    g.strokeStyle = `rgba(38,36,33,${a})`; g.lineWidth = m;
-    g.strokeRect(-m / 2, -m / 2, S + m, S + m);
-  }
   // the crisp seam itself: a groove with a bright reflection line just inside it
   g.strokeStyle = seam; g.lineWidth = 4; g.strokeRect(0, 0, S, S);
   g.strokeStyle = 'rgba(255,255,255,0.13)'; g.lineWidth = 1.4; g.strokeRect(4, 4, S - 8, S - 8);
@@ -79,16 +67,10 @@ export function panelTexture(base: string, seam: string, rx: number, ry: number,
     rivet(28 + i * step + step / 2, 28); rivet(28 + i * step + step / 2, S - 28);
     rivet(28, 28 + i * step + step / 2); rivet(S - 28, 28 + i * step + step / 2);
   }
-  // scattered dents of dust and finger smudges
-  for (let i = 0; i < 40; i++) {
-    const x = r() * S, y = r() * S, rr = 8 + r() * 34, a = (0.02 + r() * 0.05) * grime;
-    g.fillStyle = `rgba(64,60,55,${a})`;
-    wrap9(g, S, (ox, oy) => { g.beginPath(); g.arc(x + ox, y + oy, rr, 0, 7); g.fill(); });
-  }
   const t = finish(c, true); t.repeat.set(rx, ry); return t;
 }
 
-/** Floor / pad tiles, n tiles across the unit UV range. Seamless edge grime and fastener wear. */
+/** Floor / pad tiles, n tiles across the unit UV range. Seamless edges and fastener wear. */
 export function tileTexture(base: string, seam: string, n: number) {
   const S = 512, c = cv(S, S), g = c.getContext('2d')!, r = seeded(19);
   g.fillStyle = base; g.fillRect(0, 0, S, S);
@@ -114,8 +96,7 @@ export function crinkleTexture(rx: number, ry: number) {
   const t = finish(c, true); t.repeat.set(rx, ry); t.colorSpace = THREE.NoColorSpace; return t;
 }
 
-/** The NASA "meatball": blue disc, stars, white orbit, red vector, white lettering — printed, then aged by
- *  the same dust that covers everything else (no decal stays showroom-clean on the Moon). */
+/** The NASA "meatball": blue disc, stars, white orbit, red vector, white lettering. */
 export function meatball() {
   const c = cv(1024, 1024), g = c.getContext('2d')!, r = seeded(42); g.scale(2, 2);
   g.beginPath(); g.arc(256, 256, 250, 0, Math.PI * 2); g.fillStyle = NASA.blueCss; g.fill(); g.save(); g.clip();
@@ -124,40 +105,24 @@ export function meatball() {
   g.save(); g.translate(256, 256); g.rotate(-0.42); g.strokeStyle = '#fff'; g.lineWidth = 7; g.beginPath(); g.ellipse(0, 0, 330, 105, 0, 0, 7); g.stroke(); g.restore();
   g.fillStyle = '#fff'; g.font = '900 120px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('NASA', 256, 262);
   g.restore();
-  ageDecal(g, 512, 512, r);
   return finish(c);
 }
 
-/** Dust, sun-fade and scuffs laid over a finished decal canvas (w x h logical units), so no sticker in the scene
- *  reads as freshly screen-printed. Shared by the meatball, worm, plates and flags. */
-function ageDecal(g: CanvasRenderingContext2D, w: number, h: number, r: () => number) {
-  const dust = (a: number) => `rgba(118,112,102,${a})`;
-  for (let i = 0; i < w * h * 0.012; i++) { g.fillStyle = dust(0.06 + r() * 0.22); g.beginPath(); g.arc(r() * w, r() * h, 0.4 + r() * 1.8, 0, 7); g.fill(); }
-  for (let i = 0; i < 6; i++) {   // faint dust drifts with a direction, like something brushed past
-    const x = r() * w, y = r() * h;
-    g.strokeStyle = dust(0.05 + r() * 0.1); g.lineWidth = 2 + r() * 6;
-    g.beginPath(); g.moveTo(x, y); g.lineTo(x + (r() - 0.5) * w * 0.5, y + (r() - 0.5) * h * 0.4); g.stroke();
-  }
-  g.fillStyle = 'rgba(96,88,74,0.055)'; g.fillRect(0, 0, w, h);   // overall sun-fade and dust film
-}
-
-/** The "worm" wordmark: red, no crossbar on the As — then aged. */
+/** The "worm" wordmark: red, no crossbar on the As. */
 export function worm() {
   const c = cv(2048, 680), g = c.getContext('2d')!; g.scale(2, 2);
   g.fillStyle = NASA.redCss; g.font = '900 250px Arial Black, Helvetica, Arial, sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'left';
   let x = 20; for (const ch of 'N\u039BS\u039B') { g.fillText(ch, x, 175); x += g.measureText(ch).width + 14; }
-  ageDecal(g, 1024, 340, seeded(88));
   return finish(c);
 }
 
-/** Equipment plate: light panel, NASA-blue lettering, blue/red edge tabs — aged like the rest. */
+/** Equipment plate: light panel, NASA-blue lettering, blue/red edge tabs. */
 export function plateTexture(text: string) {
   const c = cv(1024, 192), g = c.getContext('2d')!; g.scale(2, 2);
   g.fillStyle = '#eceff0'; g.fillRect(0, 0, 512, 96);
   g.fillStyle = NASA.blueCss; g.fillRect(0, 0, 18, 96); g.fillStyle = NASA.redCss; g.fillRect(18, 0, 6, 96);
   g.strokeStyle = NASA.blueCss; g.lineWidth = 3; g.strokeRect(1.5, 1.5, 509, 93);
   g.fillStyle = NASA.blueCss; g.font = 'bold 38px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 270, 50);
-  ageDecal(g, 512, 96, seeded(text.length * 7 + 3));
   return finish(c);
 }
 
@@ -167,12 +132,10 @@ export function flagTexture() {
   g.fillStyle = '#3c3b6e'; g.fillRect(0, 0, 198, 140);
   g.fillStyle = '#f0efe9';
   for (let row = 0; row < 9; row++) for (let col = 0; col < (row % 2 ? 5 : 6); col++) { g.beginPath(); g.arc((row % 2 ? 33 : 16) + col * 33, 12 + row * 15, 3.2, 0, 7); g.fill(); }
-  ageDecal(g, 494, 260, seeded(23));
   return finish(c);
 }
 
-/** Solar-cell grid for the array: per-cell tint jitter, hairline busbars, dust speckle and corner accumulation
- *  (dust on the glass is a real power-loss problem, and it kills the "flat sticker" read). */
+/** Solar-cell grid for the array: per-cell tint jitter and hairline busbars. */
 export function cellTexture(cols: number, rows: number) {
   const c = cv(128, 128), g = c.getContext('2d')!, r = seeded(71);
   g.fillStyle = '#0c1a3a'; g.fillRect(0, 0, 128, 128);
@@ -184,55 +147,14 @@ export function cellTexture(cols: number, rows: number) {
     const v = Math.floor(r() * 14) - 7;
     g.fillStyle = `rgba(${18 + v},${30 + v},${62 + v},0.55)`; g.fillRect(cx * 32 + 2, cy * 32 + 2, 28, 28);
   }
-  // dust speckle and faint streaks where dust has slid down the glass
-  for (let i = 0; i < 130; i++) { g.fillStyle = `rgba(112,106,96,${0.08 + r() * 0.2})`; g.beginPath(); g.arc(r() * 128, r() * 128, 0.4 + r() * 1.3, 0, 7); g.fill(); }
-  for (let i = 0; i < 6; i++) { g.strokeStyle = `rgba(112,106,96,${0.06 + r() * 0.1})`; g.lineWidth = 1 + r() * 2; const x = r() * 128; g.beginPath(); g.moveTo(x, r() * 40); g.lineTo(x + (r() - 0.5) * 8, 128); g.stroke(); }
   const t = finish(c, true); t.repeat.set(cols, rows); return t;
 }
 
-/** Paint per-vertex dust onto a geometry: a warm-grey film that thickens toward the ground (nothing stays clean
- *  at height zero on the Moon) with a hash mottle so it never reads as a smooth gradient. Returns the geometry,
- *  ready for a material with vertexColors: true. */
-export function dustGradient(geo: THREE.BufferGeometry, o: { y0?: number; y1?: number; max?: number; hash?: number } = {}): THREE.BufferGeometry {
-  const p = geo.attributes.position;
-  const y0 = o.y0 ?? 0, y1 = o.y1 ?? 2.2, max = o.max ?? 0.45, hseed = o.hash ?? 1;
-  const col = new Float32Array(p.count * 3);
-  for (let i = 0; i < p.count; i++) {
-    const y = p.getY(i);
-    const t = Math.min(1, Math.max(0, (y1 - y) / (y1 - y0)));
-    const x = p.getX(i), z = p.getZ(i);
-    const hv = Math.sin(x * 12.9898 * hseed + y * 78.233 + z * 37.719) * 43758.5453, n = hv - Math.floor(hv);
-    const f = t * (0.55 + 0.45 * n) * max;   // dust fraction at this vertex
-    const k = 1 - f;
-    col[i * 3] = k; col[i * 3 + 1] = k * (1 - 0.05 * f); col[i * 3 + 2] = k * (1 - 0.13 * f);   // warm grey, never clean-dark
-  }
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  return geo;
-}
-/** Aged pad ring paint: off-white with wear-through gaps, dust film and streaks. */
+/** Pad ring paint: clean off-white striping. */
 export function ringTexture() {
-  const c = cv(512, 64), g = c.getContext('2d')!, r = seeded(51);
+  const c = cv(512, 64), g = c.getContext('2d')!;
   g.fillStyle = '#d8d4c9'; g.fillRect(0, 0, 512, 64);
-  for (let i = 0; i < 60; i++) {   // paint worn through to the slab in patches
-    const x = r() * 512, w = 4 + r() * 26;
-    g.fillStyle = `rgba(120,114,106,${0.25 + r() * 0.45})`; g.fillRect(x, 0, w, 64);
-  }
-  for (let i = 0; i < 40; i++) { g.strokeStyle = `rgba(96,90,82,${0.08 + r() * 0.2})`; g.lineWidth = 1 + r() * 3; const y = r() * 64; g.beginPath(); g.moveTo(r() * 512, y); g.lineTo(r() * 512, y + (r() - 0.5) * 8); g.stroke(); }
   const t = finish(c, true); t.repeat.set(8, 1); return t;
-}
-
-/** Lander blast stain: a soft, off-centre radial scorch with streaks blown outward. */
-export function scorchTexture() {
-  const c = cv(256, 256), g = c.getContext('2d')!, r = seeded(64);
-  const gr = g.createRadialGradient(128, 128, 8, 128, 128, 120);
-  gr.addColorStop(0, 'rgba(28,25,22,0.55)'); gr.addColorStop(0.45, 'rgba(38,34,30,0.28)'); gr.addColorStop(1, 'rgba(48,44,38,0)');
-  g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 36; i++) {   // streaks blown outward from the centre, like ejecta rays
-    const a = r() * Math.PI * 2, r0 = 30 + r() * 30, r1 = r0 + 30 + r() * 70;
-    g.strokeStyle = `rgba(30,27,24,${0.1 + r() * 0.2})`; g.lineWidth = 1 + r() * 4;
-    g.beginPath(); g.moveTo(128 + Math.cos(a) * r0, 128 + Math.sin(a) * r0); g.lineTo(128 + Math.cos(a) * r1, 128 + Math.sin(a) * r1); g.stroke();
-  }
-  return finish(c);
 }
 
 /** Gold MLI foil: an albedo where every crease has its own bright ridge and dark valley, a matching bump, and a
@@ -268,23 +190,13 @@ export function goldFoil(rx = 1, ry = 1) {
   return set;
 }
 
-/** Contact dust: a soft warm-grey blob with mottled edges — stamped under wheels, tank cradles and props so
- *  everything visibly *sits* in the regolith instead of floating on a clean slab. */
+/** A plain soft contact shadow — stamped under wheels, tank cradles and props so everything visibly *sits*
+ *  on the ground instead of floating on a clean slab. Pure darkening, no dust. */
 export function groundDustTexture() {
-  const S = 256, c = cv(S, S), g = c.getContext('2d')!, r = seeded(97);
+  const S = 256, c = cv(S, S), g = c.getContext('2d')!;
   const gr = g.createRadialGradient(S / 2, S / 2, 6, S / 2, S / 2, S / 2);
-  gr.addColorStop(0, 'rgba(52,48,43,0.5)'); gr.addColorStop(0.55, 'rgba(74,69,62,0.3)'); gr.addColorStop(1, 'rgba(96,90,80,0)');
+  gr.addColorStop(0, 'rgba(0,0,0,0.42)'); gr.addColorStop(0.55, 'rgba(0,0,0,0.22)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
   g.fillStyle = gr; g.fillRect(0, 0, S, S);
-  for (let i = 0; i < 260; i++) {   // mottled, kicked-up edges
-    const a = r() * Math.PI * 2, rad = S * (0.18 + r() * 0.3);
-    g.fillStyle = `rgba(70,64,56,${0.08 + r() * 0.22})`;
-    g.beginPath(); g.arc(S / 2 + Math.cos(a) * rad, S / 2 + Math.sin(a) * rad, 1 + r() * 4, 0, 7); g.fill();
-  }
-  for (let i = 0; i < 26; i++) {   // speckle spray around the rim
-    const a = r() * Math.PI * 2, rad = S * (0.32 + r() * 0.16);
-    g.fillStyle = `rgba(88,82,72,${0.1 + r() * 0.2})`;
-    g.beginPath(); g.arc(S / 2 + Math.cos(a) * rad, S / 2 + Math.sin(a) * rad, 0.6 + r() * 1.6, 0, 7); g.fill();
-  }
   return finish(c);
 }
 
@@ -319,9 +231,9 @@ export function floorTextures(repeat: number) {
   return { map: m, bump: bm };
 }
 
-// ---------- wear system: every object gets patchy roughness, scuffs and grime ----------
+// ---------- wear system: every object gets patchy roughness and scuffs ----------
 // A single uniform roughness value is the number-one "plastic toy" tell: real hardware is shinier where hands
-// and sleeves rub it, duller where dust settles, and repainted in mismatched lots. These presets paint an albedo
+// and sleeves rub it, and repainted in mismatched lots. These presets paint an albedo
 // mottle, a roughness map (the important one) and a bump grain on canvas; `wornMat` tints them with any base
 // colour, so one small texture set serves the whole outpost instead of clone-stamped flat materials.
 export type WearPreset = 'paint' | 'metal' | 'plastic' | 'rubber' | 'fabric';
@@ -348,13 +260,13 @@ export function wearTextures(preset: WearPreset, rep = 1): WearSet {
   g.fillStyle = '#ffffff'; g.fillRect(0, 0, S, S);
   noiseLayers(g, S, r, [[2, 0.09], [5, 0.09], [11, 0.1], [29, 0.07]]);
 
-  // roughness: base grey, then the wear story — dull dust patches, shiny rub marks, fingerprint smudges
+  // roughness: base grey, then the wear story — dull and shiny patches, rub marks
   rg.fillStyle = `rgb(${(base * 255) | 0},${(base * 255) | 0},${(base * 255) | 0})`; rg.fillRect(0, 0, S, S);
   const tint = (ctx: CanvasRenderingContext2D, alpha: number, light: boolean) => {
     const v = light ? 255 : 0;
     ctx.fillStyle = `rgba(${v},${v},${v},${alpha})`;
   };
-  // broad dull/shiny patches (dust drifts vs. rubbed-clean areas)
+  // broad dull/shiny patches (sheen variation only)
   for (let i = 0; i < 34; i++) {
     const x = r() * S, y = r() * S, rr = 14 + r() * 62, light = r() > 0.45;
     tint(rg, 0.07 + r() * 0.13, light);
@@ -378,16 +290,6 @@ export function wearTextures(preset: WearPreset, rep = 1): WearSet {
     wrap9(bg, S, (ox, oy) => { bg.beginPath(); bg.moveTo(x + ox, y + oy); bg.lineTo(x + ox + dx, y + oy + dy); bg.stroke(); });
   }
 
-  // grime: soft dark blotches (higher roughness, slightly darker albedo) — grease, dust clumps, water stains
-  const nGrime = preset === 'metal' || preset === 'plastic' ? 40 : 26;
-  for (let i = 0; i < nGrime; i++) {
-    const x = r() * S, y = r() * S, rr = 6 + r() * 28, a = 0.09 + r() * 0.15;
-    rg.strokeStyle = `rgba(0,0,0,${a * 1.3})`; rg.lineWidth = 2 + r() * 5;
-    g.fillStyle = `rgba(46,42,38,${a * 0.6})`;
-    wrap9(rg, S, (ox, oy) => { rg.beginPath(); rg.arc(x + ox, y + oy, rr, 0, 7); rg.stroke(); });
-    wrap9(g, S, (ox, oy) => { g.beginPath(); g.arc(x + ox, y + oy, rr * 0.8, 0, 7); g.fill(); });
-  }
-
   // per-preset character
   if (preset === 'fabric') {
     // weave: faint horizontal and vertical threads in albedo + bump, crease sheen lines in rough
@@ -398,7 +300,7 @@ export function wearTextures(preset: WearPreset, rep = 1): WearSet {
   if (preset === 'metal') {
     // machining: faint brushed streaks, and oil-fingerprint smudges (duller, darker)
     for (let i = 0; i < 240; i++) { const y = r() * S, x = r() * S, w = 12 + r() * 60, a = 0.02 + r() * 0.05; bg.strokeStyle = `rgba(${r() > 0.5 ? 220 : 60},${r() > 0.5 ? 220 : 60},${r() > 0.5 ? 220 : 60},${a})`; bg.lineWidth = 0.8; bg.beginPath(); bg.moveTo(x, y); bg.lineTo(x + w, y); bg.stroke(); }
-    for (let i = 0; i < 10; i++) { const x = r() * S, y = r() * S, rr = 5 + r() * 13; rg.fillStyle = `rgba(0,0,0,${0.1 + r() * 0.16})`; g.fillStyle = 'rgba(40,36,30,0.05)'; wrap9(rg, S, (ox, oy) => { rg.beginPath(); rg.arc(x + ox, y + oy, rr, 0, 7); rg.fill(); }); wrap9(g, S, (ox, oy) => { g.beginPath(); g.arc(x + ox, y + oy, rr, 0, 7); g.fill(); }); }
+    for (let i = 0; i < 10; i++) { const x = r() * S, y = r() * S, rr = 5 + r() * 13; rg.fillStyle = `rgba(0,0,0,${0.1 + r() * 0.16})`; wrap9(rg, S, (ox, oy) => { rg.beginPath(); rg.arc(x + ox, y + oy, rr, 0, 7); rg.fill(); }); }
   }
   if (preset === 'rubber') {
     for (let i = 0; i < 900; i++) { const x = r() * S, y = r() * S; g.fillStyle = `rgba(255,255,255,${r() * 0.05})`; g.fillRect(x, y, 1.5, 1.5); bg.fillStyle = `rgba(${r() > 0.5 ? 210 : 70},${r() > 0.5 ? 210 : 70},${r() > 0.5 ? 210 : 70},${r() * 0.3})`; bg.fillRect(x, y, 2, 2); }
@@ -425,7 +327,7 @@ export function wearTextures(preset: WearPreset, rep = 1): WearSet {
 
 export type WornOpts = { rough?: number; metal?: number; repeat?: number; jitter?: boolean; seed?: number; extra?: THREE.MeshStandardMaterialParameters };
 
-/** A worn MeshStandardMaterial: patchy roughness, scuffs and grime, dielectric paint (metalness ~ 0 unless asked).
+/** A worn MeshStandardMaterial: patchy roughness, scuffs and dielectric paint (metalness ~ 0 unless asked).
  *  Pass `extra.map` to keep a bespoke albedo (panel grids etc.) — the wear then applies through roughness and bump. */
 export function wornMat(color: number, preset: WearPreset = 'paint', o: WornOpts = {}): THREE.MeshStandardMaterial {
   const w = wearTextures(preset, o.repeat ?? 1);

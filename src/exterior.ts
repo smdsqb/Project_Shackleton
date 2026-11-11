@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { NASA, panelTexture, tileTexture, cellTexture, flagTexture, plateTexture, ringTexture, scorchTexture, groundDustTexture, wornMat, dustGradient } from './livery';
+import { NASA, panelTexture, tileTexture, cellTexture, flagTexture, plateTexture, ringTexture, groundDustTexture, wornMat } from './livery';
 import { WALL_H, CAP_H } from './hab';
 
 // Outpost exterior: sintered-regolith landing pad, high-gain dish, the solar array (same geometry and position as
@@ -24,7 +24,7 @@ export function buildExterior(scene: THREE.Scene, heightAt: (x: number, z: numbe
   };
   const white = wornMat(0xffffff, 'paint', { rough: 0.55, metal: 0.03, repeat: 2, extra: { map: panelTexture('#f2f4f6', '#a9b1ba', 2, 2) } });
   const blue = wornMat(NASA.blue, 'paint', { rough: 0.6, metal: 0.03, repeat: 2 }), steel = mat(0xb9bfc8, 0.45, 0.6);
-  // every prop stamps a mottled dust berm where it meets the ground, so nothing floats on a clean slab
+  // every prop stamps a soft contact shadow where it meets the ground, so nothing floats on a clean slab
   const bermTex = groundDustTexture();
   const berm = (x: number, z: number, w: number, d: number, o = 0.9) => {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: bermTex, transparent: true, opacity: o, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
@@ -34,12 +34,9 @@ export function buildExterior(scene: THREE.Scene, heightAt: (x: number, z: numbe
   // landing / work pad
   const pad = new THREE.Mesh(new THREE.CircleGeometry(14, 72).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: tileTexture('#8f8c88', '#77746f', 14), roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
   pad.position.set(0, y0 + 0.025, 0); pad.receiveShadow = true; scene.add(pad);
-  // the white pad ring, aged: broken, dust-greyed paint instead of crisp airport striping
+  // the white pad ring: clean painted striping
   const ringM = new THREE.Mesh(new THREE.RingGeometry(13.6, 13.8, 96).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: ringTexture(), transparent: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
   ringM.position.set(0, y0 + 0.03, 0); scene.add(ringM);
-  // lander scorch: a faint radial blast stain under wherever the lander last stood, plus dust drifts blown across the slab
-  const scorch = new THREE.Mesh(new THREE.CircleGeometry(5.5, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: scorchTexture(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
-  scorch.position.set(2.5, y0 + 0.028, -3.5); scene.add(scorch);
 
   // high-gain dish on the dome apex
   const dish = new THREE.Group();
@@ -66,11 +63,11 @@ export function buildExterior(scene: THREE.Scene, heightAt: (x: number, z: numbe
   }
   put(new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 12), new THREE.MeshBasicMaterial({ color: 0xff4d4d })), ax, gy + 24.2, az, false);
 
-  // O2 / propellant tanks on cradles: dust settling toward the ground, pipework between them, a stencil plate
-  const tankM = wornMat(0xffffff, 'paint', { rough: 0.5, metal: 0.04, repeat: 2, extra: { map: panelTexture('#f4f6f8', '#b6bdc5', 6, 2), vertexColors: true } });   // painted vessels, not polished chrome
+  // O2 / propellant tanks on cradles: painted vessels, pipework between them, a stencil plate
+  const tankM = wornMat(0xffffff, 'paint', { rough: 0.5, metal: 0.04, repeat: 2, extra: { map: panelTexture('#f4f6f8', '#b6bdc5', 6, 2) } });   // painted vessels, not polished chrome
   for (const [x, z] of [[-10, 8], [-10, 11]] as const) {
     const t = new THREE.Group();
-    const body = new THREE.Mesh(dustGradient(new THREE.CapsuleGeometry(0.8, 3, 10, 28).rotateZ(Math.PI / 2), { y0: 0.6, y1: 1.9, max: 0.5, hash: 3.1 }), tankM); body.position.y = 1.2; t.add(body);
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.8, 3, 10, 28).rotateZ(Math.PI / 2), tankM); body.position.y = 1.2; t.add(body);
     for (const bx of [-1, 1]) { const band = new THREE.Mesh(new THREE.TorusGeometry(0.805, 0.05, 10, 32).rotateY(Math.PI / 2), blue); band.position.set(bx * 1.1, 1.2, 0); t.add(band); }
     for (const cx of [-1.2, 1.2]) { const cr = new THREE.Mesh(rbox(0.3, 0.45, 1.5, 0.08), steel); cr.position.set(cx, 0.22, 0); t.add(cr); }
     put(t, x, heightAt(x, z) + 0.03, z); berm(x, z, 5.6, 4.4, 0.85); circles.push({ x: x - 1.3, z, r: 1.0 }, { x: x + 1.3, z, r: 1.0 }, { x, z, r: 1.0 });
