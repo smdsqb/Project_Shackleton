@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { NASA, panelTexture, tileTexture, meatball, worm, plateTexture, flagTexture, groundDustTexture, wornMat, goldFoil, wearTextures, dustGradient } from './livery';
+import { NASA, panelTexture, tileTexture, plateTexture, groundDustTexture, wornMat, goldFoil, wearTextures, dustGradient } from './livery';
 
 // Pressurised Lunar Terrain Vehicle, modelled on the white faceted pressurised rover in the reference images:
 // six big balloon tyres with yellow hubs on independent tubular suspension, a faceted two-seat cab with a
@@ -45,31 +45,54 @@ function tube(parent: THREE.Object3D, pts: THREE.Vector3[], r: number, m: THREE.
 function treadTex() {
   const c = cv(256, 512), g = c.getContext('2d')!;
   g.fillStyle = '#2b2c2e'; g.fillRect(0, 0, 256, 512);
-  for (let i = 1; i < 12; i++) { g.fillStyle = '#0d0d0e'; g.fillRect(0, (i * 512) / 12 - 3, 256, 6); }
-  for (let i = 0; i < 12; i++) for (let j = 0; j < 8; j++) { g.fillStyle = (i + j) % 2 ? '#4a4b4e' : '#3a3b3e'; g.fillRect(j * 32 + 4, (i * 512) / 12 + 6, 24, 512 / 12 - 12); }
+  // chevron micro-grooves: transverse grooves running across the tread (y = across the tyre) whose slant
+  // alternates every cell, chaining into a zigzag that wraps the circumference - not road-tyre straight ribs
+  for (let i = 0; i < 4; i++) {
+    const x0 = i * 64;
+    g.strokeStyle = '#0d0d0e'; g.lineWidth = 9; g.beginPath();
+    if (i % 2 === 0) { g.moveTo(x0 + 8, 14); g.lineTo(x0 + 56, 498); } else { g.moveTo(x0 + 56, 14); g.lineTo(x0 + 8, 498); }
+    g.stroke();
+  }
   // regolith packed into the tread: grey-brown dust settled into every groove and smeared across the lugs
-  for (let i = 0; i < 12; i++) { g.fillStyle = `rgba(118,112,102,${0.5 + Math.random() * 0.28})`; g.fillRect(0, (i * 512) / 12 - 4, 256, 9); }
-  for (let i = 0; i < 12; i++) for (let j = 0; j < 8; j++) { g.fillStyle = `rgba(126,120,109,${0.14 + Math.random() * 0.2})`; g.fillRect(j * 32 + 4, (i * 512) / 12 + 6, 24, 512 / 12 - 12); }
+  for (let i = 0; i < 4; i++) {
+    const x0 = i * 64;
+    g.strokeStyle = `rgba(118,112,102,${0.5 + Math.random() * 0.28})`; g.lineWidth = 13; g.beginPath();
+    if (i % 2 === 0) { g.moveTo(x0 + 8, 14); g.lineTo(x0 + 56, 498); } else { g.moveTo(x0 + 56, 14); g.lineTo(x0 + 8, 498); }
+    g.stroke();
+  }
   for (let i = 0; i < 700; i++) { g.fillStyle = `rgba(122,116,105,${0.16 + Math.random() * 0.36})`; g.fillRect(Math.random() * 250, Math.random() * 508, 1 + Math.random() * 5, 1 + Math.random() * 3); }
   return tex(c, 36, 1, false);
 }
 function hubTex() {
+  // reference rims: a flat dish with a spiral/swirl pattern - concentric grooves offset to one side create a
+  // vortex look - two-tone: ochre/mustard spiral band outside, brushed aluminium centre, gold central hub.
   const c = cv(512, 512), g = c.getContext('2d')!;
-  g.fillStyle = '#b9902a'; g.fillRect(0, 0, 512, 512);   // mustard industrial enamel, not glossy taxi yellow
-  g.fillStyle = '#3a3320'; g.beginPath(); g.arc(256, 256, 252, 0, 7); g.arc(256, 256, 236, 0, 7, true); g.fill();
-  g.strokeStyle = '#8a6a10'; g.lineWidth = 6;
-  for (let i = 0; i < 12; i++) { const a = (i / 12) * Math.PI * 2; g.beginPath(); g.moveTo(256 + Math.cos(a) * 90, 256 + Math.sin(a) * 90); g.lineTo(256 + Math.cos(a) * 225, 256 + Math.sin(a) * 225); g.stroke(); }
-  g.fillStyle = '#4b3f14';
-  for (let i = 0; i < 12; i++) { const a = ((i + 0.5) / 12) * Math.PI * 2; g.beginPath(); g.ellipse(256 + Math.cos(a) * 160, 256 + Math.sin(a) * 160, 36, 17, a, 0, 7); g.fill(); }
-  g.strokeStyle = '#8a6a10'; g.beginPath(); g.arc(256, 256, 95, 0, 7); g.stroke(); g.beginPath(); g.arc(256, 256, 228, 0, 7); g.stroke();
-  // tonal fade: paint chalks and shadows unevenly across the face
-  const fade = g.createRadialGradient(256, 200, 40, 256, 256, 250);
-  fade.addColorStop(0, 'rgba(255,244,200,0.10)'); fade.addColorStop(0.7, 'rgba(60,55,40,0)'); fade.addColorStop(1, 'rgba(40,36,28,0.22)');
-  g.fillStyle = fade; g.fillRect(0, 0, 512, 512);
-  // dust flung radially across the face between the bolts and the rim
-  g.strokeStyle = 'rgba(138,131,120,0.35)'; g.lineWidth = 3;
-  for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2 + 0.11; g.beginPath(); g.moveTo(256 + Math.cos(a) * 96, 256 + Math.sin(a) * 96); g.lineTo(256 + Math.cos(a) * 222, 256 + Math.sin(a) * 222); g.stroke(); }
-  for (let i = 0; i < 320; i++) { g.fillStyle = `rgba(126,120,109,${0.12 + Math.random() * 0.34})`; g.fillRect(Math.random() * 508, Math.random() * 508, 2 + Math.random() * 3, 1 + Math.random() * 2); }
+  g.fillStyle = '#d9a13b'; g.fillRect(0, 0, 512, 512);   // ochre spiral band base
+  g.lineCap = 'round';
+  for (let i = 0; i < 24; i++) {
+    const rr = 158 + i * 3.9, a0 = i * 0.46;
+    g.strokeStyle = i % 2 ? 'rgba(96,66,14,0.5)' : 'rgba(246,208,128,0.42)';
+    g.lineWidth = 2.6;
+    g.beginPath(); g.arc(256, 256, rr, a0, a0 + 2.5); g.stroke();
+  }
+  // brushed aluminium centre disc
+  g.fillStyle = '#b9bdc1'; g.beginPath(); g.arc(256, 256, 156, 0, 7); g.fill();
+  for (let i = 0; i < 170; i++) {
+    const a = Math.random() * Math.PI * 2, r0 = 24 + Math.random() * 118;
+    g.strokeStyle = `rgba(255,255,255,${0.05 + Math.random() * 0.1})`; g.lineWidth = 0.8;
+    g.beginPath(); g.moveTo(256 + Math.cos(a) * r0, 256 + Math.sin(a) * r0); g.lineTo(256 + Math.cos(a) * (r0 + 8 + Math.random() * 28), 256 + Math.sin(a) * (r0 + 8 + Math.random() * 28)); g.stroke();
+  }
+  g.strokeStyle = '#84898f'; g.lineWidth = 4; g.beginPath(); g.arc(256, 256, 154, 0, 7); g.stroke();
+  // gold central hub with a sunburst, dark cap
+  const hg = g.createRadialGradient(248, 248, 4, 256, 256, 52);
+  hg.addColorStop(0, '#e8c56a'); hg.addColorStop(0.55, '#c9973f'); hg.addColorStop(1, '#8a6a10');
+  g.fillStyle = hg; g.beginPath(); g.arc(256, 256, 50, 0, 7); g.fill();
+  for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; g.strokeStyle = 'rgba(118,88,20,0.5)'; g.lineWidth = 2.2; g.beginPath(); g.moveTo(256 + Math.cos(a) * 16, 256 + Math.sin(a) * 16); g.lineTo(256 + Math.cos(a) * 46, 256 + Math.sin(a) * 46); g.stroke(); }
+  g.fillStyle = '#3a3320'; g.beginPath(); g.arc(256, 256, 11, 0, 7); g.fill();
+  // dust flung radially and speckled across the whole face
+  g.strokeStyle = 'rgba(138,131,120,0.32)'; g.lineWidth = 3;
+  for (let i = 0; i < 14; i++) { const a = (i / 14) * Math.PI * 2 + 0.11; g.beginPath(); g.moveTo(256 + Math.cos(a) * 60, 256 + Math.sin(a) * 60); g.lineTo(256 + Math.cos(a) * 225, 256 + Math.sin(a) * 225); g.stroke(); }
+  for (let i = 0; i < 300; i++) { g.fillStyle = `rgba(126,120,109,${0.1 + Math.random() * 0.3})`; g.fillRect(Math.random() * 508, Math.random() * 508, 2 + Math.random() * 3, 1 + Math.random() * 2); }
   return tex(c, 1, 1);
 }
 function hazardTex() {
@@ -92,8 +115,9 @@ function diamondTex(rx: number, ry: number) {
   return tex(c, rx, ry);
 }
 function coilTex() {
+  // silver/white coil-over springs with dark shadow between the wraps (reference: white-silver visible helix)
   const c = cv(32, 128), g = c.getContext('2d')!;
-  g.fillStyle = '#d65a14'; g.fillRect(0, 0, 32, 128); g.fillStyle = '#7a2d08';
+  g.fillStyle = '#cfd2d6'; g.fillRect(0, 0, 32, 128); g.fillStyle = '#767b81';
   for (let i = 0; i < 12; i++) g.fillRect(0, i * 10.7 + 6, 32, 3);
   return tex(c, 1, 1);
 }
@@ -103,10 +127,16 @@ export function makeScreen(w = 256, h = 160) {
   g.setTransform(2, 0, 0, 2, 0, 0); g.fillStyle = '#04141c'; g.fillRect(0, 0, w, h); t.needsUpdate = true;
   return { c, g, t, w, h };
 }
-const letterTex = (text: string, fg: string, bg: string, w = 256, h = 96) => {
-  const c = cv(w * 2, h * 2), g = c.getContext('2d')!; g.scale(2, 2); g.fillStyle = bg; g.fillRect(0, 0, w, h); g.fillStyle = fg;
-  g.font = `bold ${h * 0.55}px Helvetica, Arial, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, w / 2, h / 2 + 3);
-  g.strokeStyle = fg; g.lineWidth = 3; g.strokeRect(2, 2, w - 4, h - 4); return tex(c, 1, 1);
+/** Vehicle registration decal, thin sans-serif grey, letter-spaced like the reference "2801-R1" stencil. */
+const regTex = (text: string) => {
+  const c = cv(512, 128), g = c.getContext('2d')!;
+  g.clearRect(0, 0, 512, 128);
+  g.fillStyle = '#454545'; g.font = '300 84px Helvetica, Arial, sans-serif'; g.textBaseline = 'middle';
+  const chars = text.split(''), spacing = 16;
+  let total = 0; for (const ch of chars) total += g.measureText(ch).width + spacing;
+  let x = (512 - total + spacing) / 2;
+  for (const ch of chars) { g.fillText(ch, x, 68); x += g.measureText(ch).width + spacing; }
+  return tex(c, 1, 1);
 };
 
 // ---------- geometry helpers: planar faces with real window openings, rounded corners, edge beads ----------
@@ -150,7 +180,7 @@ function polyGeom(pts: THREE.Vector3[], holes: THREE.Vector3[][], b: Basis) {
   }
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); return g;
 }
-const glassM = new THREE.MeshPhysicalMaterial({ color: 0x8fa4b4, roughness: 0.03, metalness: 0.1, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide });
+const glassM = new THREE.MeshPhysicalMaterial({ color: 0x9fc4d8, roughness: 0.03, metalness: 0.1, transparent: true, opacity: 0.24, depthWrite: false, side: THREE.DoubleSide });   // reference blue tint
 function hexShape(r: number, round: number) {
   const pts = Array.from({ length: 6 }, (_, i) => { const a = (i / 6) * Math.PI * 2 + Math.PI / 6; return new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, 0); });
   return new THREE.Shape(roundPoly(pts, round, 4).map((p) => new THREE.Vector2(p.x, p.y)));
@@ -194,10 +224,10 @@ export type RoverModel = ReturnType<typeof buildRoverModel>;
 
 export function buildRoverModel() {
   const root = new THREE.Group(), chassis = new THREE.Group(); root.add(chassis);
-  const panelMap = () => panelTexture('#f3f3f1', '#b4b8bb', 1, 1);
-  const body = std(0xffffff, 0.55, 0.05, { map: panelMap(), side: THREE.DoubleSide, vertexColors: true });
-  const white = std(0xf1f2f0, 0.55, 0.05, { map: panelMap() });
-  const bodyPlain = std(0xe9eae7, 0.6, 0.04, { map: panelMap(), side: THREE.DoubleSide, vertexColors: true });   // pre-dusted white: never showroom-clean
+  const panelMap = () => panelTexture('#f0ede6', '#b3aea4', 1, 1);
+  const body = std(0xf5f2ea, 0.55, 0.05, { map: panelMap(), side: THREE.DoubleSide, vertexColors: true });
+  const white = std(0xedeae2, 0.55, 0.05, { map: panelMap() });
+  const bodyPlain = std(0xe2ded3, 0.6, 0.04, { map: panelMap(), side: THREE.DoubleSide, vertexColors: true });   // pre-dusted warm ivory: never showroom-clean
   const grey = std(NASA.grey, 0.55, 0.4), steel = std(0xb9bfc8, 0.5, 0.6), dark = std(0x23272d, 0.72, 0.3);
   const foil = goldFoil(3, 3);
   const gold = new THREE.MeshStandardMaterial({ color: 0xffffff, map: foil.map, bumpMap: foil.bump, bumpScale: 1.5, metalness: 0.85, roughness: 0.4, roughnessMap: wearTextures('metal', 2).rough }), copper = std(0xb87333, 0.45, 0.8), brass = std(0xc9a24a, 0.45, 0.75);
@@ -220,7 +250,7 @@ export function buildRoverModel() {
   }
 
   // ---- six wheels on independent tubular suspension ----
-  const tireM = std(0xc6c1b6, 0.92, 0, { map: treadTex(), bumpMap: treadTex(), bumpScale: 1.6 });   // dusty pale rubber, not showroom white
+  const tireM = std(0xa8a49c, 0.92, 0, { map: treadTex(), bumpMap: treadTex(), bumpScale: 1.6 });   // dusty charcoal rubber, never showroom black
   const prof = [[0.56, -0.36], [0.64, -0.41], [0.74, -0.43], [0.83, -0.38], [0.88, -0.3], [0.9, -0.2], [0.9, 0.2], [0.88, 0.3], [0.83, 0.38], [0.74, 0.43], [0.64, 0.41], [0.56, 0.36]].map(([r, y]) => new THREE.Vector2(r, y));
   const tireG = new THREE.LatheGeometry(prof, 80).rotateX(Math.PI / 2), hubM = std(0xffffff, 0.55, 0.05, { map: hubTex() });
   const coilM = std(0xd8d4c8, 0.6, 0.05, { map: coilTex() });
@@ -230,23 +260,27 @@ export function buildRoverModel() {
     const front = ax === AXLES[0], hub = dynGroup(new THREE.Group()); hub.position.set(ax, WHEEL_R, side * TRACK); chassis.add(hub);
     const steer = new THREE.Group(), spin = new THREE.Group(); hub.add(steer); steer.add(spin);
     mk(spin, tireG, tireM);
-    // geometric chevron lugs around the circumference: a smooth torus with a tread *texture* still reads as a
-    // road tyre at gameplay distance; 20 angled blocks per wheel read as an off-road tyre from any angle
+    // geometric chevron lugs: two offset rows of bars slanted ACROSS the tread (rotated about the radial
+    // axis, opposite slant per row) that interlock into a zigzag wrapping the circumference - the deep
+    // chevron/Z tread of an off-road tyre, standing proud of the tyre surface, not hidden road-tyre bars
     {
-      const lugM = std(0x3a3733, 0.95, 0);
-      const lugG = rbox(0.14, 0.1, 0.64, 0.03);
-      for (let i = 0; i < 20; i++) {
-        const a = (i / 20) * Math.PI * 2;
-        const lug = mk(spin, lugG, lugM, Math.cos(a) * 0.84, Math.sin(a) * 0.84, 0, false);
-        lug.rotation.z = a + (i % 2 ? 0.22 : -0.22);
+      const lugM = std(0x33312d, 0.95, 0);
+      const lugG = rbox(0.09, 0.16, 0.34, 0.03);
+      const N = 16, tilt = 0.62, qz = new THREE.Quaternion(), qr = new THREE.Quaternion();
+      const AX = new THREE.Vector3(1, 0, 0), AZ = new THREE.Vector3(0, 0, 1);
+      for (let row = 0; row < 2; row++) for (let i = 0; i < N; i++) {
+        const a = ((i + row * 0.5) / N) * Math.PI * 2;
+        const lug = mk(spin, lugG, lugM, Math.cos(a) * 0.9, Math.sin(a) * 0.9, row ? 0.19 : -0.19, false);
+        qz.setFromAxisAngle(AZ, a); qr.setFromAxisAngle(AX, row ? tilt : -tilt);
+        lug.quaternion.copy(qz).multiply(qr);
       }
     }
     const face = new THREE.CylinderGeometry(0.58, 0.58, 0.06, 64).rotateX(Math.PI / 2);
     mk(spin, face, hubM, 0, 0, side * 0.36); mk(spin, face, hubM, 0, 0, -side * 0.36);
-    for (const zz of [0.38, -0.38]) { const lip = mk(spin, new THREE.TorusGeometry(0.58, 0.04, 10, 56), std(0x43464a, 0.85, 0.15), 0, 0, zz); lip.castShadow = false; }   // bead ring: dusty composite, not polished gold
-    mk(spin, new THREE.CylinderGeometry(0.2, 0.23, 0.12, 28).rotateX(Math.PI / 2), grey, 0, 0, side * 0.42);
+    for (const zz of [0.38, -0.38]) { const lip = mk(spin, new THREE.TorusGeometry(0.58, 0.04, 10, 56), std(0xc9973f, 0.45, 0.7), 0, 0, zz); lip.castShadow = false; }   // gold ring band around the rim edge (ref)
+    mk(spin, new THREE.CylinderGeometry(0.2, 0.23, 0.12, 28).rotateX(Math.PI / 2), std(0xc9973f, 0.4, 0.75), 0, 0, side * 0.42);   // gold-orange central hub
     mk(spin, new THREE.SphereGeometry(0.1, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(Math.PI / 2 * side), steel, 0, 0, side * 0.46);
-    for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; mk(spin, new THREE.CylinderGeometry(0.03, 0.03, 0.05, 8).rotateX(Math.PI / 2), steel, Math.cos(a) * 0.31, Math.sin(a) * 0.31, side * 0.4, false); }
+    for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2 + 0.26; mk(spin, new THREE.CylinderGeometry(0.032, 0.032, 0.05, 8).rotateX(Math.PI / 2), steel, Math.cos(a) * 0.31, Math.sin(a) * 0.31, side * 0.4, false); }
     const rotorM = new THREE.MeshStandardMaterial({ color: 0x6b7077, metalness: 0.8, roughness: 0.4, emissive: 0xff4a10, emissiveIntensity: 0 });
     dyn(mk(spin, new THREE.CylinderGeometry(0.42, 0.42, 0.035, 48).rotateX(Math.PI / 2), rotorM, 0, 0, -side * 0.22, false));
     mk(hub, new THREE.CylinderGeometry(0.17, 0.17, 0.36, 24).rotateX(Math.PI / 2), dark, 0, 0, -side * 0.5);
@@ -289,13 +323,16 @@ export function buildRoverModel() {
   const cabHalf = CAB.half, X0 = CAB.x0, Yb = FLOOR_Y, Yt = ROOF_Y, XT = 3.8;
   const L = (x: number, y: number) => V(x, y, -cabHalf), Rr = (x: number, y: number) => V(x, y, cabHalf);
   const faces: Face[] = [
-    { q: [L(X0, Yb), L(3.6, Yb), L(3.6, Yt), L(X0, Yt)], out: V(0, 0, -1), win: [[[0.07, 0.06], [0.62, 0.06], [0.62, 0.8], [0.07, 0.8]], [[0.7, 0.42], [0.93, 0.42], [0.93, 0.8], [0.7, 0.8]]] },
-    { q: [Rr(X0, Yb), Rr(3.6, Yb), Rr(3.6, Yt), Rr(X0, Yt)], out: V(0, 0, 1), win: [[[0.07, 0.42], [0.46, 0.42], [0.46, 0.8], [0.07, 0.8]], [[0.54, 0.42], [0.93, 0.42], [0.93, 0.8], [0.54, 0.8]]] },
+    // port side: the plug door is the large pane of the reference triangle-trapezoid-triangle side-glass band;
+    // the forward pane is the nose-corner triangle (reference image 2)
+    { q: [L(X0, Yb), L(3.6, Yb), L(3.6, Yt), L(X0, Yt)], out: V(0, 0, -1), win: [[[0.07, 0.06], [0.62, 0.06], [0.62, 0.8], [0.07, 0.8]], [[0.68, 0.4], [0.95, 0.4], [0.95, 0.82]]] },
+    // starboard side: full reference arrangement, rear triangle + large trapezoid + forward triangle
+    { q: [Rr(X0, Yb), Rr(3.6, Yb), Rr(3.6, Yt), Rr(X0, Yt)], out: V(0, 0, 1), win: [[[0.03, 0.4], [0.26, 0.4], [0.03, 0.8]], [[0.3, 0.4], [0.64, 0.4], [0.64, 0.8], [0.3, 0.8]], [[0.68, 0.4], [0.95, 0.4], [0.95, 0.82]]] },
     { q: [L(3.6, 2.5), V(4.75, 2.5, -1.25), V(XT, Yt, -1.1), L(3.6, Yt)], out: V(0.3, 0, -1), win: [[[0.12, 0.15], [0.9, 0.15], [0.66, 0.88], [0.2, 0.88]]] },
     { q: [Rr(3.6, 2.5), V(4.75, 2.5, 1.25), V(XT, Yt, 1.1), Rr(3.6, Yt)], out: V(0.3, 0, 1), win: [[[0.12, 0.15], [0.9, 0.15], [0.66, 0.88], [0.2, 0.88]]] },
     { q: [L(3.6, Yb), V(4.9, Yb, -1.15), V(4.75, 2.5, -1.25), L(3.6, 2.5)], out: V(0.4, 0, -1) },
     { q: [Rr(3.6, Yb), V(4.9, Yb, 1.15), V(4.75, 2.5, 1.25), Rr(3.6, 2.5)], out: V(0.4, 0, 1) },
-    { q: [V(4.75, 2.5, -1.25), V(4.75, 2.5, 1.25), V(XT, Yt, 1.1), V(XT, Yt, -1.1)], out: V(1, 0.6, 0), win: [[[0.03, 0.08], [0.3, 0.08], [0.29, 0.92], [0.05, 0.92]], [[0.34, 0.08], [0.66, 0.08], [0.66, 0.92], [0.34, 0.92]], [[0.7, 0.08], [0.97, 0.08], [0.95, 0.92], [0.71, 0.92]]] },
+    { q: [V(4.75, 2.5, -1.25), V(4.75, 2.5, 1.25), V(XT, Yt, 1.1), V(XT, Yt, -1.1)], out: V(1, 0.6, 0), win: [[[0.03, 0.08], [0.32, 0.08], [0.26, 0.9], [0.04, 0.9]], [[0.36, 0.08], [0.64, 0.08], [0.5, 0.84]], [[0.68, 0.08], [0.97, 0.08], [0.96, 0.9], [0.74, 0.9]]] },   // reference windscreen: trapezoid pair forming an inverted-V with a central downward-triangle pane
     { q: [V(4.9, Yb, -1.15), V(4.9, Yb, 1.15), V(4.75, 2.5, 1.25), V(4.75, 2.5, -1.25)], out: V(1, 0, 0), win: [[[0.06, 0.18], [0.43, 0.18], [0.36, 0.86], [0.1, 0.86]], [[0.57, 0.18], [0.94, 0.18], [0.9, 0.86], [0.64, 0.86]]] },
     { q: [L(X0, Yb), Rr(X0, Yb), Rr(X0, Yt), L(X0, Yt)], out: V(-1, 0, 0) },
     { q: [L(X0, Yb), L(4.9, Yb), Rr(4.9, Yb), Rr(X0, Yb)], out: V(0, -1, 0) },
@@ -346,12 +383,22 @@ export function buildRoverModel() {
       splash(1.9, 1.66, s * (cabHalf + 0.013), s < 0 ? Math.PI : 0, 0.7);
     }
   }
-  // brow visor with integrated light bar above the windscreen
+  // brow visor carries the reference light rack: two LED bars of ten round lamp modules each, angled
+  // slightly downward, plus square four-lamp pods flanking (reference image 2)
   const brow = mk(cabG, rbox(0.4, 0.12, 2.6, 0.06), white, XT + 0.1, Yt + 0.1, 0); brow.rotation.z = -0.2;
-  mk(cabG, rbox(0.08, 0.07, 2.2, 0.03), lampOn, XT + 0.3, Yt + 0.03, 0, false).rotation.z = -0.2;
-  mk(cabG, rbox(0.12, 0.06, 1.5, 0.03), lampOn, 3.5, Yt + 0.08, 0, false);
-  for (const z of [-1, 1]) for (const x of [1.7, 3.3]) mk(cabG, rbox(0.12, 0.1, 0.12, 0.04), lampOn, x, Yt + 0.04, z * 1.4, false);
-  mk(cabG, new THREE.CylinderGeometry(0.1, 0.12, 0.14, 20), amber, 2.2, Yt + 0.12, 0.9, false);
+  const lampBar = (z: number) => {
+    const bar = new THREE.Group(); bar.position.set(XT + 0.26, Yt + 0.05, z); bar.rotation.z = -0.3; cabG.add(bar);
+    mk(bar, rbox(0.1, 0.1, 1.7, 0.03), dark, 0, 0, 0, false);
+    for (let i = 0; i < 10; i++) mk(bar, new THREE.CylinderGeometry(0.048, 0.048, 0.05, 16).rotateZ(Math.PI / 2), lampOn, 0.03, 0.01, -0.76 + i * 0.169, false);
+    return bar;
+  };
+  lampBar(-0.52); lampBar(0.52);
+  for (const s of [-1, 1]) {   // square four-lamp pods
+    const pod = new THREE.Group(); pod.position.set(XT + 0.1, Yt + 0.11, s * 1.28); pod.rotation.z = -0.22; cabG.add(pod);
+    mk(pod, rbox(0.16, 0.15, 0.16, 0.04), dark, 0, 0, 0, false);
+    for (const dy of [-0.042, 0.042]) for (const dz of [-0.042, 0.042]) mk(pod, new THREE.CylinderGeometry(0.031, 0.031, 0.03, 12).rotateZ(Math.PI / 2), lampOn, 0.075, dy, dz, false);
+  }
+  mk(cabG, new THREE.CylinderGeometry(0.1, 0.12, 0.14, 20), amber, 2.2, Yt + 0.12, 0.9, false);   // hazard beacon stays
   // lower-nose grille slats and warm footwell glow behind the two big lower lights
   for (let i = 0; i < 5; i++) mk(cabG, rbox(0.04, 0.035, 0.7, 0.012), dark, 4.84, 1.75 + i * 0.1, 0, false);
   for (const s of [-1, 1]) mk(cabG, new THREE.PlaneGeometry(0.7, 0.55), new THREE.MeshBasicMaterial({ color: 0xff9a2e }), 4.55, 2.0, s * 0.72, false).rotation.y = Math.PI / 2;
@@ -366,16 +413,27 @@ export function buildRoverModel() {
   const lampMat = [glowMat(0xfff4dc, 1.8), glowMat(0xfff4dc, 1.8)], lampMeshes: THREE.Mesh[][] = [[], []];
   [[-0.95, -0.55, -0.2], [0.2, 0.55, 0.95]].forEach((zs, si) => zs.forEach((z) => { const m = dyn(mk(cabG, rbox(0.07, 0.17, 0.22, 0.05), lampMat[si], 4.93, 2.12, z, false)); lampMeshes[si].push(m); }));
   for (const z of [-0.8, 0.8]) mk(cabG, rbox(0.08, 0.1, 0.3, 0.04), amber, 4.88, 1.82, z, false);
-  // roof rails and rack
-  for (const s of [-1, 1]) { tube(cabG, [V(X0 + 0.1, Yt + 0.28, s * 1.3), V(3.5, Yt + 0.28, s * 1.3)], 0.025, steel, 4); for (const x of [X0 + 0.1, 2.5, 3.5]) strut(cabG, V(x, Yt, s * 1.3), V(x, Yt + 0.28, s * 1.3), 0.022, steel, 8); }
-  tube(cabG, [V(X0 + 0.1, Yt + 0.28, -1.3), V(X0 + 0.1, Yt + 0.28, 1.3)], 0.025, steel, 4); tube(cabG, [V(3.5, Yt + 0.28, -1.3), V(3.5, Yt + 0.28, 1.3)], 0.025, steel, 4);
-  // X-band dish on a gimballed mast (dynamic so damage can bend it), UHF whips, mast camera, star tracker, mirror pods
+  // roof rails: bronze grab rails along the roof sides (reference), steel stanchions
+  for (const s of [-1, 1]) { tube(cabG, [V(X0 + 0.1, Yt + 0.28, s * 1.3), V(3.5, Yt + 0.28, s * 1.3)], 0.025, copper, 4); for (const x of [X0 + 0.1, 2.5, 3.5]) strut(cabG, V(x, Yt, s * 1.3), V(x, Yt + 0.28, s * 1.3), 0.022, steel, 8); }
+  tube(cabG, [V(X0 + 0.1, Yt + 0.28, -1.3), V(X0 + 0.1, Yt + 0.28, 1.3)], 0.025, copper, 4); tube(cabG, [V(3.5, Yt + 0.28, -1.3), V(3.5, Yt + 0.28, 1.3)], 0.025, copper, 4);
+  // X-band array rebuilt as the reference octagonal flat-panel dish on a gimballed mast (dynamic so damage can bend it)
   const dishG = dynGroup(new THREE.Group()); dishG.position.set(2.0, Yt, -0.7); cabG.add(dishG);
   mk(dishG, new THREE.CylinderGeometry(0.07, 0.1, 0.8, 16), steel, 0, 0.4, 0); mk(dishG, rbox(0.3, 0.2, 0.3, 0.09), grey, 0, 0.85, 0);
-  const bowl = mk(dishG, new THREE.SphereGeometry(0.55, 44, 16, 0, Math.PI * 2, 0, 0.62), std(0xe8e6df, 0.55, 0.05, { side: THREE.DoubleSide }), 0.05, 1.15, 0); bowl.scale.y = 0.5; bowl.rotation.set(0, 0, -1.15);
+  const panel = mk(dishG, new THREE.CylinderGeometry(0.58, 0.4, 0.16, 8), std(0xe9e6de, 0.5, 0.05, { flatShading: true }), 0.05, 1.15, 0);
+  panel.rotation.set(0, Math.PI / 8, -1.15);   // flat-top octagon, facing up and forward
   strut(dishG, V(0.05, 1.15, 0), V(0.45, 1.5, 0), 0.02, steel, 6); mk(dishG, new THREE.CylinderGeometry(0.03, 0.05, 0.14, 12), brass, 0.47, 1.52, 0).rotation.z = -1.0;
   bake(dishG, false);
-  for (const [x, z, h] of [[1.6, 0.85, 1.7], [1.5, 0.55, 1.2]] as const) { strut(cabG, V(x, Yt, z), V(x, Yt + h, z), 0.012, dark, 6); mk(cabG, new THREE.SphereGeometry(0.03, 10, 8), steel, x, Yt + h, z, false); }
+  // main whip antenna: tapered mast with a cross-arm near the top, junction box at the base and a yellow cable
+  // running down the roof edge (reference image 2); a short blade antenna sits beside it
+  {
+    const wx = 1.6, wz = 0.85, h = 1.7;
+    strut(cabG, V(wx, Yt, wz), V(wx, Yt + h, wz), 0.012, dark, 6);
+    mk(cabG, new THREE.SphereGeometry(0.03, 10, 8), steel, wx, Yt + h, wz, false);
+    strut(cabG, V(wx - 0.1, Yt + h - 0.17, wz), V(wx + 0.1, Yt + h - 0.17, wz), 0.008, dark, 4);   // cross-arm
+    mk(cabG, rbox(0.13, 0.09, 0.13, 0.03), dark, wx, Yt + 0.05, wz, false);                          // junction box
+    tube(cabG, [V(wx, Yt + 0.08, wz + 0.05), V(1.25, Yt + 0.06, wz + 0.32), V(0.6, Yt + 0.05, wz + 0.62)], 0.012, yellow, 10);   // yellow cable
+    strut(cabG, V(1.5, Yt, 0.55), V(1.5, Yt + 1.2, 0.55), 0.012, dark, 6); mk(cabG, new THREE.SphereGeometry(0.03, 10, 8), steel, 1.5, Yt + 1.2, 0.55, false);
+  }
   const mast = new THREE.Group(); mast.position.set(3.35, Yt, 0.85); cabG.add(mast);
   mk(mast, new THREE.CylinderGeometry(0.045, 0.06, 1.2, 14), steel, 0, 0.6, 0); mk(mast, rbox(0.22, 0.14, 0.7, 0.06), grey, 0, 1.25, 0);
   for (const z of [-0.26, 0.26]) { mk(mast, new THREE.CylinderGeometry(0.05, 0.05, 0.12, 20).rotateZ(Math.PI / 2), dark, 0.14, 1.27, z); mk(mast, new THREE.CircleGeometry(0.045, 20).rotateY(Math.PI / 2), glowMat(0x2a6aff, 0.8), 0.205, 1.27, z, false); }
@@ -465,13 +523,19 @@ export function buildRoverModel() {
   strut(bay, V(bx0, 3.0, -1.4), V(bx0, 3.0, 1.4), 0.055, white); strut(bay, V(bx1, 3.4, -1.4), V(bx1, 3.4, 1.4), 0.055, white);
   mk(bay, rbox(2.6, 0.12, 2.9, 0.05), std(0xa8adb3, 0.65, 0.5, { map: diamondTex(5, 5) }), 0.1, FLOOR_Y + 0.03, 0);
   const hexG = new THREE.ExtrudeGeometry(hexShape(0.58, 0.07), { depth: 0.45, bevelEnabled: true, bevelSize: 0.04, bevelThickness: 0.05, bevelSegments: 3 }).translate(0, 0, -0.225);
+  // reference hex pods: white hexagon bodies, a grey hex bezel with an 8-blade fan/turbine face, gold trim ring
   for (const s of [-1, 1]) for (const x of [-0.45, 0.8]) {
-    mk(bay, hexG, gold, x, 2.35, s * 1.05);
+    mk(bay, hexG, white, x, 2.35, s * 1.05);
     const cap = new THREE.ExtrudeGeometry(hexShape(0.46, 0.06), { depth: 0.04, bevelEnabled: true, bevelSize: 0.015, bevelThickness: 0.015, bevelSegments: 2 }).translate(0, 0, 0.0);
-    mk(bay, cap, white, x, 2.35, s * 1.31).rotation.y = s < 0 ? Math.PI : 0;
+    mk(bay, cap, grey, x, 2.35, s * 1.31).rotation.y = s < 0 ? Math.PI : 0;
     for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2 + Math.PI / 6; mk(bay, new THREE.CylinderGeometry(0.025, 0.025, 0.05, 8).rotateX(Math.PI / 2), steel, x + Math.cos(a) * 0.4, 2.35 + Math.sin(a) * 0.4, s * 1.37, false); }
-    mk(bay, new THREE.CylinderGeometry(0.16, 0.16, 0.08, 20).rotateX(Math.PI / 2), grey, x, 2.35, s * 1.38);
-    mk(bay, new THREE.TorusGeometry(0.1, 0.02, 10, 20), copper, x, 2.35, s * 1.43);
+    for (let i = 0; i < 8; i++) {   // fan blades inside the bezel
+      const a = (i / 8) * Math.PI * 2 + 0.22;
+      const bl = mk(bay, rbox(0.3, 0.012, 0.09, 0.005), dark, x + Math.cos(a) * 0.17, 2.35 + Math.sin(a) * 0.17, s * 1.365, false);
+      bl.rotation.z = a + 0.6;
+    }
+    mk(bay, new THREE.CylinderGeometry(0.06, 0.06, 0.06, 16).rotateX(Math.PI / 2), dark, x, 2.35, s * 1.38);
+    mk(bay, new THREE.TorusGeometry(0.1, 0.02, 10, 20), brass, x, 2.35, s * 1.43);   // gold trim ring
   }
   for (const s of [-1, 1]) {
     const t = mk(bay, new THREE.CapsuleGeometry(0.3, 1.4, 10, 24), steel, 0.1, 2.0, s * 0.35); t.rotation.z = Math.PI / 2;
@@ -481,9 +545,16 @@ export function buildRoverModel() {
   mk(bay, rbox(0.8, 0.9, 0.5, 0.09), grey, -0.9, 2.1, 0); for (let i = 0; i < 12; i++) mk(bay, rbox(0.7, 0.012, 0.46, 0.005), steel, -0.9, 1.7 + i * 0.07, 0, false);
   tube(bay, [V(-0.9, 2.5, 0), V(-0.4, 2.9, 0.3), V(0.3, 2.8, 0.5), V(0.9, 2.7, 0.9)], 0.04, copper); tube(bay, [V(-0.9, 2.3, 0), V(-0.3, 2.9, -0.3), V(0.4, 2.7, -0.5), V(0.9, 2.6, -0.9)], 0.04, brass);
   tube(bay, [V(0.1, 2.9, -1.0), V(0.5, 3.2, -0.2), V(0.9, 3.0, 0.5), V(1.2, 2.6, 1.0)], 0.03, std(0x1f4aa0, 0.5, 0.2));
-  const solar = new THREE.Group(); solar.position.set((bx0 + bx1) / 2, 3.2, 0); solar.rotation.z = Math.atan2(0.4, bx1 - bx0); bay.add(solar);
-  // solar blanket: a 2x2-cell image (each cell a slightly different navy with its own faint highlight, hairline bus
-  // bars and dust speckle) so the array does not read as one flat repeated sticker
+  // machinery deck where the solar blanket used to sit: a grate plate on the frame, ducts, actuator and cable
+  // bundles exposed to the sky (reference image 1: an open cluttered machinery bay between cab and cargo bed)
+  mk(bay, rbox(2.6, 0.06, 2.9, 0.03), std(0x8f959c, 0.6, 0.5, { map: grateTex(6, 6) }), 0.1, 3.42, 0);
+  for (const [x, z, r, L] of [[-0.7, -0.55, 0.13, 0.7], [0.55, 0.6, 0.1, 0.5]] as const) { const d = mk(bay, new THREE.CapsuleGeometry(r, L, 8, 16), steel, x, 3.62, z); d.rotation.z = Math.PI / 2; }
+  mk(bay, rbox(0.5, 0.28, 0.4, 0.06), grey, 0.15, 3.58, -0.5);
+  mk(bay, new THREE.CylinderGeometry(0.09, 0.09, 0.32, 16), brass, -0.35, 3.62, 0.45);
+  tube(bay, [V(-0.95, 3.5, 0.4), V(-0.4, 3.72, 0.2), V(0.2, 3.62, 0.6), V(0.85, 3.75, 0.25)], 0.024, yellow, 16);
+  tube(bay, [V(-0.95, 3.55, -0.5), V(-0.3, 3.75, -0.2), V(0.45, 3.66, -0.6)], 0.024, copper, 16);
+  // solar cell texture: a 2x2-cell image (each cell a slightly different navy with its own faint highlight,
+  // hairline bus bars and dust speckle) so the array does not read as one flat repeated sticker
   const cellTex = (() => {
     const c = cv(256, 256), g = c.getContext('2d')!;
     for (let cy = 0; cy < 2; cy++) for (let cx = 0; cx < 2; cx++) {
@@ -497,11 +568,8 @@ export function buildRoverModel() {
       for (const t of [0.33, 0.66]) { g.beginPath(); g.moveTo(X + 128 * t, Y); g.lineTo(X + 128 * t, Y + 128); g.moveTo(X, Y + 128 * t); g.lineTo(X + 128, Y + 128 * t); g.stroke(); }
     }
     for (let i = 0; i < 240; i++) { g.fillStyle = `rgba(112,106,96,${0.06 + Math.random() * 0.18})`; g.beginPath(); g.arc(Math.random() * 256, Math.random() * 256, 0.5 + Math.random() * 1.6, 0, 7); g.fill(); }
-    return tex(c, 7, 7);
+    return tex(c, 7, 5);
   })();
-  mk(solar, rbox(2.7, 0.05, 2.9, 0.02), std(0xbcc3cc, 0.33, 0.62, { map: cellTex }));
-  for (const s of [-1, 1]) mk(solar, rbox(2.75, 0.09, 0.09, 0.04), steel, 0, 0, s * 1.46); for (const x of [-1.37, 1.37]) mk(solar, rbox(0.09, 0.09, 2.95, 0.04), steel, x, 0, 0);
-  for (const s of [-1, 1]) { const p = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.8), new THREE.MeshBasicMaterial({ map: meatball(), transparent: true })); p.position.set(0.1, 2.0, s * 1.47); if (s < 0) p.rotation.y = Math.PI; bay.add(p); }
 
   // ---- flatbed: deck, rails, tie-downs, cargo, tool rack, hitch ----
   const bed = new THREE.Group(); root.add(bed);
@@ -520,16 +588,37 @@ export function buildRoverModel() {
   }
   tube(bed, [V(-5.15, FLOOR_Y + 0.5, -1.5), V(-5.15, FLOOR_Y + 0.5, 1.5)], 0.025, steel, 4);
   for (const [x, z] of [[-1.6, -1.2], [-1.6, 1.2], [-4.9, -1.2], [-4.9, 1.2], [-3.2, -1.35], [-3.2, 1.35]] as const) mk(bed, new THREE.TorusGeometry(0.07, 0.015, 8, 16).rotateX(Math.PI / 2), steel, x, FLOOR_Y + 0.1, z, false);
-  const crateM = std(0xe0ddd3, 0.65, 0.05), plates = ['LUNAR SAMPLES 1', 'LUNAR SAMPLES 2', 'DRILL KIT'];
-  [[-1.9, -0.75], [-1.9, 0.5], [-3.0, -0.8]].forEach(([x, z], i) => {
-    // cargo is never square to the frame: each crate sits at its own slight angle, label and all
-    const cg = new THREE.Group(); cg.position.set(x, FLOOR_Y, z); cg.rotation.y = (i - 1) * 0.14 + 0.05; bed.add(cg);
-    mk(cg, rbox(0.9, 0.55, 0.65, 0.1), crateM, 0, 0.4, 0);
-    mk(cg, rbox(0.92, 0.05, 0.67, 0.03), i === 2 ? red : blue, 0, 0.52, 0);
-    mk(cg, new THREE.PlaneGeometry(0.5, 0.094), new THREE.MeshBasicMaterial({ map: plateTexture(plates[i]) }), 0, 0.36, 0.336, false);
-  });
-  for (const x of [-3.7, -4.2]) { mk(bed, new THREE.CylinderGeometry(0.2, 0.2, 1.1, 20), steel, x, FLOOR_Y + 0.62, 0.9); mk(bed, new THREE.TorusGeometry(0.2, 0.025, 8, 24).rotateX(Math.PI / 2), yellow, x, FLOOR_Y + 0.9, 0.9); mk(bed, new THREE.SphereGeometry(0.2, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), steel, x, FLOOR_Y + 1.17, 0.9); }
-  for (const z of [-1, 1]) for (const x of [-2.4, -3.4]) mk(bed, rbox(0.06, 0.012, 0.8, 0.005), std(0xe8b923, 0.8, 0), x, FLOOR_Y + 0.72, z * 0.3, false);
+  // solar array on the right-rear of the deck, canted ~15 deg on short legs with a bronze backing frame and
+  // yellow cabling running down to the deck (references 2 and 3)
+  const solar = new THREE.Group(); solar.position.set(-3.35, FLOOR_Y + 0.74, 0.78); solar.rotation.z = 0.26; bed.add(solar);
+  // shingled: three overlapping leaves, each stepped up and canted a hair more than the one behind it, so the
+  // lap gaps and shadow lines between cells read as the reference's lapped array, not one flush sticker
+  for (let k = 0; k < 3; k++) {
+    const leaf = new THREE.Group(); leaf.position.set(-0.76 + k * 0.75, k * 0.055, 0); leaf.rotation.z = k * 0.03; solar.add(leaf);
+    const t = cellTex.clone(); t.needsUpdate = true; t.repeat.set(2.5, 5);   // cell density matches the old single blanket
+    mk(leaf, rbox(0.78, 0.05, 1.45, 0.02), std(0xbcc3cc, 0.33, 0.62, { map: t }));
+    for (const s of [-1, 1]) mk(leaf, rbox(0.06, 0.09, 1.52, 0.03), copper, 0.37, 0, s * 0.73);
+  }
+  for (const s of [-1, 1]) mk(solar, rbox(2.3, 0.07, 0.08, 0.03), copper, 0, 0.03, s * 0.72); for (const x of [-1.05, 1.1]) mk(solar, rbox(0.08, 0.08, 1.5, 0.03), copper, x, 0, 0);
+  for (const [x, z] of [[-0.95, -0.55], [-0.95, 0.55], [0.95, -0.55], [0.95, 0.55]] as const) strut(solar, V(x, -0.03, z), V(x, -0.62, z), 0.028, steel, 8);
+  tube(bed, [V(-4.35, FLOOR_Y + 0.72, 1.42), V(-4.5, FLOOR_Y + 0.45, 1.48), V(-4.42, FLOOR_Y + 0.16, 1.32)], 0.014, yellow, 10);
+  // two-tier crate rack in a metal cage on the left of the deck, yellow cable loom sagging across the front
+  // (reference image 2); each crate keeps its own slight angle and label
+  const crateM = std(0xe0ddd3, 0.65, 0.05), plates = ['LUNAR SAMPLES 1', 'LUNAR SAMPLES 2', 'DRILL KIT', 'SPARES'];
+  {
+    const rack = new THREE.Group(); rack.position.set(-3.25, FLOOR_Y, -0.78); bed.add(rack);
+    mk(rack, rbox(2.3, 0.06, 1.3, 0.03), grey, 0, 0.09, 0);
+    for (const dx of [-1.12, 1.12]) for (const dz of [-0.62, 0.62]) strut(rack, V(dx, 0.1, dz), V(dx, 1.4, dz), 0.035, steel, 8);
+    for (const dz of [-0.62, 0.62]) { strut(rack, V(-1.12, 1.4, dz), V(1.12, 1.4, dz), 0.028, steel, 8); strut(rack, V(-1.12, 0.76, dz), V(1.12, 0.76, dz), 0.024, steel, 8); }
+    strut(rack, V(-1.12, 0.1, -0.62), V(1.12, 1.4, -0.62), 0.018, steel, 8); strut(rack, V(-1.12, 1.4, 0.62), V(1.12, 0.1, 0.62), 0.018, steel, 8);
+    [[-0.56, 0.33, 0], [0.58, 0.29, 1], [-0.55, 0.32, 2], [0.6, 0.28, 3]].forEach(([cx, cz, i]) => {
+      const cg = new THREE.Group(); cg.position.set(cx, 0.12 + Math.floor(i / 2) * 0.64, cz); cg.rotation.y = (i - 1.5) * 0.11; rack.add(cg);
+      mk(cg, rbox(0.85, 0.55, 0.6, 0.09), crateM, 0, 0.28, 0);
+      mk(cg, rbox(0.87, 0.04, 0.62, 0.02), i > 1 ? red : blue, 0, 0.5, 0);
+      mk(cg, new THREE.PlaneGeometry(0.5, 0.094), new THREE.MeshBasicMaterial({ map: plateTexture(plates[i]) }), 0, 0.24, 0.306, false);
+    });
+    tube(rack, [V(-1.02, 1.12, 0.68), V(-0.6, 0.95, 0.73), V(-0.1, 1.06, 0.71), V(0.5, 0.92, 0.74), V(1.02, 1.1, 0.68)], 0.02, yellow, 24);
+  }
   tube(bed, [V(-5.15, FLOOR_Y + 1.1, -1.4), V(-5.15, FLOOR_Y + 1.1, 1.4)], 0.02, steel, 4); for (const s of [-1, 1]) strut(bed, V(-5.15, FLOOR_Y, s * 1.4), V(-5.15, FLOOR_Y + 1.1, s * 1.4), 0.02, steel, 8);
   for (const [z, kind] of [[-0.9, 'shovel'], [-0.6, 'rake'], [-0.3, 'hammer'], [0.0, 'tongs']] as const) {
     strut(bed, V(-5.1, FLOOR_Y + 0.8, z - 0.4), V(-4.05, FLOOR_Y + 0.8, z - 0.4), 0.018, steel, 8);
@@ -537,17 +626,20 @@ export function buildRoverModel() {
   }
   mk(bed, new THREE.CylinderGeometry(0.1, 0.1, 0.4, 16).rotateZ(Math.PI / 2), steel, -5.45, FLOOR_Y - 0.1, 0); mk(bed, new THREE.SphereGeometry(0.08, 16, 12), brass, -5.7, FLOOR_Y - 0.1, 0);
   for (const s of [-1, 1]) { mk(bed, rbox(0.06, 0.16, 0.3, 0.04), taillamp, -5.22, FLOOR_Y - 0.05, s * 1.35, false); mk(bed, rbox(0.05, 0.08, 0.2, 0.03), lampOn, -5.22, FLOOR_Y + 0.12, s * 1.35, false); }
-  for (const s of [-1, 1]) { const p = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.56), new THREE.MeshBasicMaterial({ map: worm(), transparent: true })); p.position.set(-3.2, FLOOR_Y - 0.14, s * 1.555); if (s < 0) p.rotation.y = Math.PI; bed.add(p); }
 
-  // ---- livery ----
-  const ball = meatball(), flag = flagTexture();
+  // ---- livery: reference-clean flanks. "2801-R1" registration forward of the door, vehicle name on the door
+  // leaf itself (a decal at the hull plane would end up hidden inside the proud plug door) ----
   const decal = (map: THREE.Texture, w: number, h: number, x: number, y: number, z: number, ry: number) => {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map, transparent: true, roughness: 0.5, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
     m.position.set(x, y, z); m.rotation.y = ry; cabG.add(m); return m;
   };
-  decal(ball, 0.7, 0.7, 3.05, 1.98, cabHalf + 0.012, 0); decal(ball, 0.7, 0.7, 3.2, 1.98, -cabHalf - 0.012, Math.PI);
-  decal(flag, 0.5, 0.26, 2.1, 1.85, cabHalf + 0.012, 0); decal(plateTexture('LTV-01  SHACKLETON'), 0.9, 0.17, 2.2, 1.7, cabHalf + 0.012, 0); decal(plateTexture('LTV-01'), 0.5, 0.094, 3.3, 1.65, -cabHalf - 0.012, Math.PI);
-  decal(letterTex('PRESSURISED', '#0b3d91', '#f3f5f7', 256, 64), 0.7, 0.175, 2.5, 3.78, -cabHalf - 0.013, Math.PI);
+  decal(regTex('2801-R1'), 0.85, 0.21, 3.15, 2.12, cabHalf + 0.012, 0);
+  decal(regTex('2801-R1'), 0.85, 0.21, 3.15, 2.12, -cabHalf - 0.012, Math.PI);
+  decal(plateTexture('LTV-01'), 0.5, 0.094, 3.3, 1.65, -cabHalf - 0.012, Math.PI);
+  {   // name plate rides on the outside face of the door leaf, so it swings with the hatch
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.17), new THREE.MeshStandardMaterial({ map: plateTexture('LTV-01  SHACKLETON'), transparent: true, roughness: 0.5 }));
+    p.position.set(-hw / 2, 2.02, -0.275); p.rotation.y = Math.PI; hatch.add(p);
+  }
 
   // ---- damage visuals, hidden until needed: dents on the panels most likely to be hit, cracks on the windscreen panes ----
   const dentM = new THREE.MeshBasicMaterial({ map: dentTex(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
@@ -562,7 +654,7 @@ export function buildRoverModel() {
   const crackM = new THREE.MeshBasicMaterial({ map: crackTex(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
   const cracks: THREE.Mesh[] = [];
   const wsFace = faces[6], wsB = basis(wsFace.q, wsFace.out);
-  [[0.165, 0.5, 0.27], [0.5, 0.5, 0.32], [0.835, 0.5, 0.27]].forEach(([s, t, w]) => {
+  [[0.165, 0.5, 0.27], [0.5, 0.5, 0.13], [0.835, 0.5, 0.27]].forEach(([s, t, w]) => {   // centre crack narrowed to sit on the triangle pane
     const c = bil(wsFace.q, s, t), width = w * wsFace.q[0].distanceTo(wsFace.q[1]) * 0.95, height = wsFace.q[0].distanceTo(wsFace.q[3]) * 0.8;
     const m = new THREE.Mesh(new THREE.PlaneGeometry(width, height), crackM); m.position.copy(c).addScaledVector(wsB.n, 0.045); m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(wsB.u, wsB.v, wsB.n)); m.visible = false; cabG.add(m); cracks.push(m);
   });

@@ -37,8 +37,9 @@ function noiseLayers(g: CanvasRenderingContext2D, S: number, r: () => number, oc
 
 /** One painted aluminium panel (seams + rivets), tiled rx by ry times.
  *  1024 px with layered grunge: brushed streaks, multi-octave value noise, grime settled into the seams,
- *  domed rivets with their own highlight and shadow, faint drips and scuffs. Everything wraps seamlessly. */
-export function panelTexture(base: string, seam: string, rx: number, ry: number) {
+ *  domed rivets with their own highlight and shadow, faint drips and scuffs. Everything wraps seamlessly.
+ *  `grime` scales the lived-in filth: 1 = exterior duty, ~0.4 for pressurised interiors that get wiped down. */
+export function panelTexture(base: string, seam: string, rx: number, ry: number, grime = 1) {
   const S = 1024, c = cv(S, S), g = c.getContext('2d')!, r = seeded(31);
   g.fillStyle = base; g.fillRect(0, 0, S, S);
   // brushed-metal grain: many faint horizontal strokes
@@ -52,12 +53,12 @@ export function panelTexture(base: string, seam: string, rx: number, ry: number)
   noiseLayers(g, S, r, [[3, 0.05], [7, 0.05], [16, 0.07], [48, 0.06]]);
   // subtle vertical gravity drips from the rivet rows
   for (let i = 0; i < 24; i++) {
-    const x = 20 + r() * (S - 40), y = r() * S * 0.5, w = 2 + r() * 5, h = 60 + r() * 260, a = 0.03 + r() * 0.05;
+    const x = 20 + r() * (S - 40), y = r() * S * 0.5, w = 2 + r() * 5, h = 60 + r() * 260, a = (0.03 + r() * 0.05) * grime;
     g.strokeStyle = `rgba(52,48,44,${a})`; g.lineWidth = w;
     wrap9(g, S, (ox, oy) => { g.beginPath(); g.moveTo(x + ox, y + oy); g.lineTo(x + ox + (r() - 0.5) * 8, y + oy + h); g.stroke(); });
   }
   // grime that settles along the seam lines (a soft dark band on every edge)
-  for (const [m, a] of [[10, 0.16], [26, 0.07]] as const) {
+  for (const [m, a] of [[10, 0.16 * grime], [26, 0.07 * grime]] as const) {
     g.strokeStyle = `rgba(38,36,33,${a})`; g.lineWidth = m;
     g.strokeRect(-m / 2, -m / 2, S + m, S + m);
   }
@@ -80,7 +81,7 @@ export function panelTexture(base: string, seam: string, rx: number, ry: number)
   }
   // scattered dents of dust and finger smudges
   for (let i = 0; i < 40; i++) {
-    const x = r() * S, y = r() * S, rr = 8 + r() * 34, a = 0.02 + r() * 0.05;
+    const x = r() * S, y = r() * S, rr = 8 + r() * 34, a = (0.02 + r() * 0.05) * grime;
     g.fillStyle = `rgba(64,60,55,${a})`;
     wrap9(g, S, (ox, oy) => { g.beginPath(); g.arc(x + ox, y + oy, rr, 0, 7); g.fill(); });
   }
