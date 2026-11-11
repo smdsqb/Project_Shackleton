@@ -12,27 +12,93 @@ const finish = (c: HTMLCanvasElement, repeat = false) => {
 };
 const seeded = (seed: number) => () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
 
-/** One painted aluminium panel (seams + rivets), tiled rx by ry times. */
+/** Seamless drawing: stamp the same feature at every 3x3 wrap-around offset, so the tile shows no seam. */
+function wrap9(g: CanvasRenderingContext2D, S: number, fn: (ox: number, oy: number) => void) {
+  for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) fn(dx * S, dy * S);
+}
+/** Stacked value noise, painted at several octaves; each octave is periodic so the tile shows no seam. */
+function noiseLayers(g: CanvasRenderingContext2D, S: number, r: () => number, octs: [number, number][]) {
+  for (const [cells, alpha] of octs) {
+    const grid = new Float32Array(cells * cells);
+    for (let i = 0; i < cells * cells; i++) grid[i] = r();
+    const tmp = cv(S, S), tg = tmp.getContext('2d')!, id = tg.createImageData(S, S);
+    const at = (x: number, y: number) => grid[(((y % cells) + cells) % cells) * cells + (((x % cells) + cells) % cells)];
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const fx = (x * cells) / S, fy = (y * cells) / S, x0 = Math.floor(fx), y0 = Math.floor(fy), tx = fx - x0, ty = fy - y0;
+      const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty); // smoothstep interpolation
+      const v = (at(x0, y0) * (1 - sx) + at(x0 + 1, y0) * sx) * (1 - sy) + (at(x0, y0 + 1) * (1 - sx) + at(x0 + 1, y0 + 1) * sx) * sy;
+      const b = (v * 255) | 0, i = (y * S + x) * 4;
+      id.data[i] = id.data[i + 1] = id.data[i + 2] = b; id.data[i + 3] = 255;
+    }
+    tg.putImageData(id, 0, 0);
+    g.globalAlpha = alpha; g.drawImage(tmp, 0, 0); g.globalAlpha = 1;
+  }
+}
+
+/** One painted aluminium panel (seams + rivets), tiled rx by ry times.
+ *  1024 px with layered grunge: brushed streaks, multi-octave value noise, grime settled into the seams,
+ *  domed rivets with their own highlight and shadow, faint drips and scuffs. Everything wraps seamlessly. */
 export function panelTexture(base: string, seam: string, rx: number, ry: number) {
-  const c = cv(256, 256), g = c.getContext('2d')!;
-  g.fillStyle = base; g.fillRect(0, 0, 256, 256);
-  const gr = g.createLinearGradient(0, 0, 0, 256); gr.addColorStop(0, 'rgba(255,255,255,.10)'); gr.addColorStop(1, 'rgba(0,0,0,.07)');
-  g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
-  g.strokeStyle = seam; g.lineWidth = 5; g.strokeRect(0, 0, 256, 256);
-  { const r = seeded(31), vg = g.createRadialGradient(128, 128, 60, 128, 128, 190); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.07)'); g.fillStyle = vg; g.fillRect(0, 0, 256, 256);
-    for (let i = 0; i < 260; i++) { g.fillStyle = i % 2 ? 'rgba(0,0,0,.05)' : 'rgba(255,255,255,.05)'; g.fillRect(r() * 254, r() * 254, 1 + r() * 2, 1 + r() * 2); } }
-  g.fillStyle = seam;
-  for (const [x, y] of [[14, 14], [242, 14], [14, 242], [242, 242], [128, 14], [128, 242]]) { g.beginPath(); g.arc(x, y, 3, 0, 7); g.fill(); }
+  const S = 1024, c = cv(S, S), g = c.getContext('2d')!, r = seeded(31);
+  g.fillStyle = base; g.fillRect(0, 0, S, S);
+  // brushed-metal grain: many faint horizontal strokes
+  for (let i = 0; i < 900; i++) {
+    const y = r() * S, x = r() * S, w = 30 + r() * 190, a = 0.012 + r() * 0.035;
+    g.strokeStyle = r() > 0.5 ? `rgba(255,255,255,${a})` : `rgba(30,34,40,${a})`;
+    g.lineWidth = 0.6 + r() * 1.4;
+    wrap9(g, S, (ox, oy) => { g.beginPath(); g.moveTo(x + ox, y + oy); g.lineTo(x + ox + w, y + oy); g.stroke(); });
+  }
+  // broad tonal variation (paint is never perfectly even)
+  noiseLayers(g, S, r, [[3, 0.05], [7, 0.05], [16, 0.07], [48, 0.06]]);
+  // subtle vertical gravity drips from the rivet rows
+  for (let i = 0; i < 24; i++) {
+    const x = 20 + r() * (S - 40), y = r() * S * 0.5, w = 2 + r() * 5, h = 60 + r() * 260, a = 0.03 + r() * 0.05;
+    g.strokeStyle = `rgba(52,48,44,${a})`; g.lineWidth = w;
+    wrap9(g, S, (ox, oy) => { g.beginPath(); g.moveTo(x + ox, y + oy); g.lineTo(x + ox + (r() - 0.5) * 8, y + oy + h); g.stroke(); });
+  }
+  // grime that settles along the seam lines (a soft dark band on every edge)
+  for (const [m, a] of [[10, 0.16], [26, 0.07]] as const) {
+    g.strokeStyle = `rgba(38,36,33,${a})`; g.lineWidth = m;
+    g.strokeRect(-m / 2, -m / 2, S + m, S + m);
+  }
+  // the crisp seam itself: a groove with a bright reflection line just inside it
+  g.strokeStyle = seam; g.lineWidth = 4; g.strokeRect(0, 0, S, S);
+  g.strokeStyle = 'rgba(255,255,255,0.13)'; g.lineWidth = 1.4; g.strokeRect(4, 4, S - 8, S - 8);
+  // rivet line just inside the border, alternating with mid-edge fasteners: domed, with a real highlight and shadow so they read at 3 m
+  const rivet = (x: number, y: number, rr = 6.4) => {
+    wrap9(g, S, (ox, oy) => {
+      const rg = g.createRadialGradient(x + ox - rr * 0.35, y + oy - rr * 0.35, rr * 0.12, x + ox, y + oy, rr);
+      rg.addColorStop(0, 'rgba(255,255,255,0.8)'); rg.addColorStop(0.5, 'rgba(196,193,186,0.4)'); rg.addColorStop(0.85, 'rgba(28,30,34,0.55)'); rg.addColorStop(1, 'rgba(60,58,54,0.1)');
+      g.fillStyle = rg; g.beginPath(); g.arc(x + ox, y + oy, rr, 0, 7); g.fill();
+      g.fillStyle = 'rgba(18,20,24,0.6)'; g.beginPath(); g.arc(x + ox + rr * 0.18, y + oy + rr * 0.3, rr * 0.36, 0, 7); g.fill();
+    });
+  };
+  const step = S / 8;
+  for (let i = 0; i < 8; i++) {
+    rivet(28 + i * step + step / 2, 28); rivet(28 + i * step + step / 2, S - 28);
+    rivet(28, 28 + i * step + step / 2); rivet(S - 28, 28 + i * step + step / 2);
+  }
+  // scattered dents of dust and finger smudges
+  for (let i = 0; i < 40; i++) {
+    const x = r() * S, y = r() * S, rr = 8 + r() * 34, a = 0.02 + r() * 0.05;
+    g.fillStyle = `rgba(64,60,55,${a})`;
+    wrap9(g, S, (ox, oy) => { g.beginPath(); g.arc(x + ox, y + oy, rr, 0, 7); g.fill(); });
+  }
   const t = finish(c, true); t.repeat.set(rx, ry); return t;
 }
 
-/** Floor / pad tiles, n tiles across the unit UV range. */
+/** Floor / pad tiles, n tiles across the unit UV range. Seamless edge grime and fastener wear. */
 export function tileTexture(base: string, seam: string, n: number) {
-  const c = cv(128, 128), g = c.getContext('2d')!;
-  g.fillStyle = base; g.fillRect(0, 0, 128, 128);
-  g.strokeStyle = seam; g.lineWidth = 4; g.strokeRect(0, 0, 128, 128);
-  g.fillStyle = 'rgba(0,0,0,.05)';
-  for (let i = 0; i < 160; i++) g.fillRect(Math.random() * 126, Math.random() * 126, 2, 2);
+  const S = 512, c = cv(S, S), g = c.getContext('2d')!, r = seeded(19);
+  g.fillStyle = base; g.fillRect(0, 0, S, S);
+  noiseLayers(g, S, r, [[2, 0.06], [6, 0.06], [14, 0.06]]);
+  g.strokeStyle = seam; g.lineWidth = 4; g.strokeRect(0, 0, S, S);
+  g.strokeStyle = 'rgba(255,255,255,0.10)'; g.lineWidth = 1.2; g.strokeRect(3, 3, S - 6, S - 6);
+  for (let i = 0; i < 90; i++) {
+    const x = r() * S, y = r() * S, a = 0.03 + r() * 0.06, w = 2 + r() * 2;
+    g.fillStyle = r() > 0.55 ? `rgba(255,255,255,${a})` : `rgba(0,0,0,${a})`;
+    wrap9(g, S, (ox, oy) => g.fillRect(x + ox, y + oy, w, w));
+  }
   const t = finish(c, true); t.repeat.set(n, n); return t;
 }
 

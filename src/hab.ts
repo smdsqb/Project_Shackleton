@@ -74,6 +74,47 @@ function aoBlob(w: number, d: number) {
   m.renderOrder = 1; return m;
 }
 
+/** Dust tracked in on boots: a mottled grey-brown footprint with scuff streaks, laid on the floor as a decal. */
+let dustFloorTex: THREE.CanvasTexture | null = null;
+function floorDustTex() {
+  if (dustFloorTex) return dustFloorTex;
+  const c = document.createElement('canvas'); c.width = 256; c.height = 256; const g = c.getContext('2d')!;
+  const gr = g.createRadialGradient(128, 128, 14, 128, 128, 120); gr.addColorStop(0, 'rgba(74,70,64,.72)'); gr.addColorStop(0.6, 'rgba(84,80,73,.38)'); gr.addColorStop(1, 'rgba(90,86,78,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 46; i++) {   // scuffs and partial prints
+    const a = Math.random() * Math.PI * 2, rr = 20 + Math.random() * 88, x = 128 + Math.cos(a) * rr, y = 128 + Math.sin(a) * rr;
+    g.strokeStyle = `rgba(58,54,48,${0.16 + Math.random() * 0.26})`; g.lineWidth = 3 + Math.random() * 7; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + (Math.random() - 0.5) * 70, y + (Math.random() - 0.5) * 70); g.stroke();
+  }
+  for (let i = 0; i < 130; i++) { g.fillStyle = `rgba(70,66,60,${0.08 + Math.random() * 0.2})`; g.beginPath(); g.arc(Math.random() * 256, Math.random() * 256, 1 + Math.random() * 2.5, 0, 7); g.fill(); }
+  dustFloorTex = new THREE.CanvasTexture(c); return dustFloorTex;
+}
+function dustDecal(w: number, d: number, a: number) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: floorDustTex(), transparent: true, opacity: a, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
+  m.renderOrder = 2; return m;
+}
+
+/** Regolith dust caked on the lower hull outside: a vertical alpha ramp, heavier at the base, mottled so it reads
+ *  as dust and not paint. Mapped onto a cylinder just outside the shell (two arcs that dodge the airlock tunnels). */
+let skirtTex: THREE.CanvasTexture | null = null;
+function dustSkirtTexture() {
+  if (skirtTex) return skirtTex;
+  const c = document.createElement('canvas'); c.width = 128; c.height = 256; const g = c.getContext('2d')!;
+  const gr = g.createLinearGradient(0, 0, 0, 256);   // canvas bottom row = uv v = 0 = the base of the wall
+  gr.addColorStop(0, 'rgba(116,109,99,0)'); gr.addColorStop(0.42, 'rgba(112,106,96,0.24)'); gr.addColorStop(0.78, 'rgba(97,92,85,0.52)'); gr.addColorStop(1, 'rgba(84,80,75,0.72)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 256);
+  for (let i = 0; i < 240; i++) {   // clumps and sprays kicked up against the hull
+    const y = 110 + Math.random() * 146, x = Math.random() * 128, rr = 2 + Math.random() * 9;
+    g.fillStyle = `rgba(104,98,90,${0.06 + Math.random() * 0.16})`; g.beginPath(); g.arc(x, y, rr, 0, 7); g.fill();
+  }
+  for (let i = 0; i < 60; i++) {   // fine spray streaks rising off the ground
+    const y = 150 + Math.random() * 100, x = Math.random() * 128;
+    g.strokeStyle = `rgba(120,114,104,${0.05 + Math.random() * 0.1})`; g.lineWidth = 1 + Math.random() * 2;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + (Math.random() - 0.5) * 14, y - 10 - Math.random() * 34); g.stroke();
+  }
+  skirtTex = new THREE.CanvasTexture(c); skirtTex.wrapS = THREE.RepeatWrapping; skirtTex.repeat.set(8, 1); return skirtTex;
+}
+
 export class Hab {
   prompt = ''; toast = ''; suitHours = EVA_H; exposed = false; where = 'HAB';
   lockdown = false; alarm = false; flicker = 0; lockHeld: boolean[] = [false, false]; private paneM!: THREE.MeshPhysicalMaterial; private shutterK = 0;
@@ -104,11 +145,11 @@ export class Hab {
     // ---- shell: painted panels outside, soft lining inside, gold MLI skirt, blue interior band ----
     const gap = Math.asin(0.8 / R), arc = P - 2 * gap, starts = [P / 2 + gap, (3 * P) / 2 + gap];
     const shellM = new THREE.MeshStandardMaterial({ map: panelTexture('#f2f4f6', '#a9b1ba', 30, 2), roughness: 0.42, metalness: 0.2 });
-    const liningM = new THREE.MeshStandardMaterial({ map: panelTexture('#e9edf0', '#c5cbd2', 30, 2), roughness: 0.75, metalness: 0.03, side: THREE.BackSide });
+    const liningM = new THREE.MeshStandardMaterial({ map: panelTexture('#ddd9d2', '#b0a9a0', 30, 2), roughness: 0.78, metalness: 0.03, side: THREE.BackSide });   // warm-grey interior: lived-in, not sterile white
     const domeM = new THREE.MeshStandardMaterial({ map: panelTexture('#f2f4f6', '#a9b1ba', 28, 3), roughness: 0.42, metalness: 0.2 });
-    const ceilM = new THREE.MeshStandardMaterial({ map: panelTexture('#eef1f4', '#cdd3da', 28, 3), roughness: 0.8, metalness: 0.02, side: THREE.BackSide });
-    const gold = new THREE.MeshStandardMaterial({ color: NASA.gold, roughness: 0.32, metalness: 0.85, bumpMap: crinkleTexture(16, 1), bumpScale: 2 });
-    const bandM = new THREE.MeshStandardMaterial({ color: NASA.blue, roughness: 0.6, side: THREE.BackSide });
+    const ceilM = new THREE.MeshStandardMaterial({ map: panelTexture('#e0dbd3', '#b6b0a7', 28, 3), roughness: 0.82, metalness: 0.02, side: THREE.BackSide });
+    const gold = new THREE.MeshStandardMaterial({ color: 0xd4ac4e, roughness: 0.28, metalness: 0.88, bumpMap: crinkleTexture(16, 1), bumpScale: 2 });   // brighter, sharper-reflecting MLI so the foil reads as gold in the dim lunar env
+    const bandM = new THREE.MeshStandardMaterial({ color: 0x274066, roughness: 0.8, metalness: 0.04, bumpMap: crinkleTexture(26, 1), bumpScale: 0.6, side: THREE.BackSide });   // dusty-navy soft-goods band, not lacquered toy blue
     const kickM = new THREE.MeshStandardMaterial({ color: NASA.graphite, roughness: 0.7, side: THREE.BackSide });
     const trimM = mat(0xc9ced6, false, 0.35, 0.45);
     const wallA = wallAlpha(), shellW = shellM.clone(), liningW = liningM.clone();
@@ -126,12 +167,15 @@ export class Hab {
     const capIn = mesh(new THREE.SphereGeometry(R - 0.06, 72, 28, 0, P * 2, 0, P / 2), ceilM, 0, WALL_H, 0); capIn.scale.y = (CAP_H - 0.04) / (R - 0.06);
     const rib = new THREE.MeshStandardMaterial({ color: 0xdfe3e8, roughness: 0.6 });
     for (let i = 0; i < 8; i++) { const t = mesh(new THREE.TorusGeometry(R - 0.07, 0.05, 10, 48, P), rib, 0, WALL_H, 0); t.scale.y = CAP_H / R; t.rotation.y = (i * P) / 8; }
+    // regolith dust caked on the lower hull: two overlay arcs that stop short of the airlock tunnels
+    const skirtM = new THREE.MeshStandardMaterial({ map: dustSkirtTexture(), transparent: true, roughness: 1, metalness: 0, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+    for (const s of starts) { const sk = mesh(new THREE.CylinderGeometry(R + 0.035, R + 0.035, 0.95, 72, 1, true, s, arc), skirtM, 0, 0.475, 0); sk.renderOrder = 1; }
 
     // floor (tiled composite decking) and the soft ceiling light ring
     { const ft = floorTextures(11.7); mesh(new THREE.CircleGeometry(R - 0.06, 64).rotateX(-P / 2), new THREE.MeshStandardMaterial({ map: ft.map, bumpMap: ft.bump, bumpScale: 1.4, roughness: 0.68, metalness: 0.03 }), 0, 0.03, 0); }
     const glowM = (c: number, k = 1.1) => { const m = new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: k, roughness: 0.4 }); this.glows.push({ m, base: k }); return m; };
-    mesh(new THREE.TorusGeometry(3 * K, 0.05, 12, 64).rotateX(P / 2), glowM(0xe6eeff, 0.5), 0, 3.5, 0);
-    mesh(new THREE.TorusGeometry(1.2 * K, 0.04, 12, 48).rotateX(P / 2), glowM(0xffe2bd, 0.32), 0, 3.75, 0);
+    mesh(new THREE.TorusGeometry(3 * K, 0.05, 12, 64).rotateX(P / 2), glowM(0xe6eeff, 0.34), 0, 3.5, 0);
+    mesh(new THREE.TorusGeometry(1.2 * K, 0.04, 12, 48).rotateX(P / 2), glowM(0xffe2bd, 0.22), 0, 3.75, 0);
     // lighting plan: cool general light, cooler task light over the lab, warm light at the galley and bunks, a cyan wash at the comms desk
     const lamp = (c: number, i: number, dist: number, x: number, y: number, z: number, sh = false) => { const l = new THREE.PointLight(c, i, dist, dist === 0 ? 1.4 : 2); if (sh) { l.castShadow = true; l.shadow.mapSize.set(1024, 1024); l.shadow.bias = -0.002; l.shadow.normalBias = 0.03; l.shadow.radius = 3; } l.position.set(x, y, z); this.root.add(l); this.lights.push({ l, base: i, color: c }); };
     for (let i = 0; i < 8; i++) { const a = ((i + 0.5) * P) / 4; lamp(0xf1f4fa, 4.5, 0, 3.9 * K / 1.3 * Math.cos(a), 3.3, 3.9 * K / 1.3 * Math.sin(a), i % 4 === 0); }   // even LED ring in the ceiling: no hot spot under the player
@@ -197,7 +241,7 @@ export class Hab {
     fit(-0.3 * P, { w: 2.0, h: 0.95, color: 0xdfe3e8, text: 'GALLEY' });
     for (const th of [0.28 * P, 0.5 * P, 0.72 * P]) {
       fit(th, { w: 2.0, h: 0.5, y: 0.25, d: 0.95, color: 0xc4ceda, accent: null }); fit(th, { w: 2.0, h: 0.5, y: 1.3, d: 0.95, color: 0xc4ceda, accent: null });
-      this.curtains.push(fit(th, { w: 2.0, h: 1.9, d: 0.04, r: 4.35, color: 0x2c5aa0, accent: null, text: th === 0.5 * P ? 'CREW QUARTERS' : undefined }));
+      this.curtains.push(fit(th, { w: 2.0, h: 1.9, d: 0.04, r: 4.35, color: 0x3d5a7c, accent: null, text: th === 0.5 * P ? 'CREW QUARTERS' : undefined }));   // dusty slate fabric, not saturated toy blue
     }
     // suit rack: five human-shaped EVA suits hanging from a rail, facing the room
     const rackTh = -0.13 * P, rg = fit(rackTh, { w: 2.9, h: 2.05, d: 0.15, r: 5.2, color: 0x59626d, text: 'EVA SUITS', accent: NASA.red });
@@ -222,6 +266,14 @@ export class Hab {
       const seat = mesh(new THREE.SphereGeometry(0.24, 20, 14), mat(0x2c5aa0, false, 0.85), sx, 0.45, sz); seat.scale.y = 0.4;
     }
     this.circles.push({ x: 0, z: GZ, r: 1.25 });
+
+    // dust tracked in through both airlocks: a heavy footprint at each threshold, a scuffed path worn towards the galley
+    for (const sgn of [1, -1]) {
+      const th = dustDecal(2.3, 1.55, 1.0); th.position.set(sgn * (R - 1.15), 0.037, 0); th.rotation.y = sgn > 0 ? 0 : Math.PI; this.root.add(th);
+      const path = dustDecal(2.6, 0.95, 0.34); path.position.set(sgn * (R - 2.6), 0.037, sgn * 0.3); path.rotation.y = sgn > 0 ? -0.25 : Math.PI + 0.25; this.root.add(path);
+    }
+    const wear = dustDecal(3.2, 2.4, 0.3); wear.position.set(0, 0.037, GZ - 0.2); this.root.add(wear);   // worn patch under the galley table stools
+    { const rp = rackTh, rr = 5.2 + DR, dust = dustDecal(2.9, 1.5, 0.38); dust.position.set(rr * Math.cos(rp), 0.037, rr * Math.sin(rp)); dust.rotation.y = -rp; this.root.add(dust); }   // boot-worn spot in front of the suit rack
 
     // ---- dressing: lab equipment, bedding, galley fittings, stool backs, safety gear, exposed pipe and duct runs ----
     {
@@ -285,6 +337,12 @@ export class Hab {
       };
       run(-0.77 * P, -0.44 * P, 2.02, R - 0.14, 0.028, 0x2f6fd0); run(-0.65 * P, -0.44 * P, 2.1, R - 0.14, 0.022, 0x2f9d58); run(-0.9 * P, -0.35 * P, 2.12, R - 0.38, 0.1, 0x9aa1ab);
       for (const dy of [0, 0.04, 0.08]) run(-0.9 * P, -0.35 * P, 1.97 + dy, R - 0.1, 0.012, 0x14171b);
+      // more harness runs: black cable looms feeding the quarters and the suit rack, with junction boxes along the way
+      for (const dy of [0, 0.045]) run(-0.35 * P, 0.1 * P, 1.99 + dy, R - 0.12, 0.013, 0x14171b);
+      run(-0.13 * P, 0.12 * P, 2.07, R - 0.13, 0.017, 0x14171b);
+      for (const th of [-0.82 * P, -0.47 * P, -0.02 * P]) {
+        mesh(rbox(0.16, 0.2, 0.11, 0.03), mat(0x3a3f46, false, 0.55, 0.25), (R - 0.34) * Math.cos(th), 2.04, (R - 0.34) * Math.sin(th), this.root, true).rotation.y = -th;
+      }
     }
     // ---- crew furnishings you can open and use: wardrobe, medical cabinet, hygiene compartment, and every other fitting ----
     {
