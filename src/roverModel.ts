@@ -44,6 +44,10 @@ function treadTex() {
   g.fillStyle = '#2b2c2e'; g.fillRect(0, 0, 256, 512);
   for (let i = 1; i < 12; i++) { g.fillStyle = '#0d0d0e'; g.fillRect(0, (i * 512) / 12 - 3, 256, 6); }
   for (let i = 0; i < 12; i++) for (let j = 0; j < 8; j++) { g.fillStyle = (i + j) % 2 ? '#4a4b4e' : '#3a3b3e'; g.fillRect(j * 32 + 4, (i * 512) / 12 + 6, 24, 512 / 12 - 12); }
+  // regolith packed into the tread: grey-brown dust settled into every groove and smeared across the lugs
+  for (let i = 0; i < 12; i++) { g.fillStyle = `rgba(118,112,102,${0.5 + Math.random() * 0.28})`; g.fillRect(0, (i * 512) / 12 - 4, 256, 9); }
+  for (let i = 0; i < 12; i++) for (let j = 0; j < 8; j++) { g.fillStyle = `rgba(126,120,109,${0.14 + Math.random() * 0.2})`; g.fillRect(j * 32 + 4, (i * 512) / 12 + 6, 24, 512 / 12 - 12); }
+  for (let i = 0; i < 700; i++) { g.fillStyle = `rgba(122,116,105,${0.16 + Math.random() * 0.36})`; g.fillRect(Math.random() * 250, Math.random() * 508, 1 + Math.random() * 5, 1 + Math.random() * 3); }
   return tex(c, 36, 1, false);
 }
 function hubTex() {
@@ -55,6 +59,10 @@ function hubTex() {
   g.fillStyle = '#4b3f14';
   for (let i = 0; i < 12; i++) { const a = ((i + 0.5) / 12) * Math.PI * 2; g.beginPath(); g.ellipse(256 + Math.cos(a) * 160, 256 + Math.sin(a) * 160, 36, 17, a, 0, 7); g.fill(); }
   g.strokeStyle = '#8a6a10'; g.beginPath(); g.arc(256, 256, 95, 0, 7); g.stroke(); g.beginPath(); g.arc(256, 256, 228, 0, 7); g.stroke();
+  // dust flung radially across the face between the bolts and the rim
+  g.strokeStyle = 'rgba(138,131,120,0.3)'; g.lineWidth = 3;
+  for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2 + 0.11; g.beginPath(); g.moveTo(256 + Math.cos(a) * 96, 256 + Math.sin(a) * 96); g.lineTo(256 + Math.cos(a) * 222, 256 + Math.sin(a) * 222); g.stroke(); }
+  for (let i = 0; i < 260; i++) { g.fillStyle = `rgba(126,120,109,${0.1 + Math.random() * 0.3})`; g.fillRect(Math.random() * 508, Math.random() * 508, 2 + Math.random() * 3, 1 + Math.random() * 2); }
   return tex(c, 1, 1);
 }
 function hazardTex() {
@@ -126,7 +134,12 @@ function polyGeom(pts: THREE.Vector3[], holes: THREE.Vector3[][], b: Basis) {
   const g = new THREE.ShapeGeometry(sh), p = g.attributes.position, nor: number[] = [], col: number[] = [], tmp = new THREE.Vector3();
   for (let i = 0; i < p.count; i++) {
     tmp.copy(b.p0).addScaledVector(b.u, p.getX(i)).addScaledVector(b.v, p.getY(i)); p.setXYZ(i, tmp.x, tmp.y, tmp.z); nor.push(b.n.x, b.n.y, b.n.z);
-    const k = 0.58 + 0.42 * Math.min(1, Math.max(0, (tmp.y - 1.5) / 1.5)); col.push(k, k * 0.985, k * 0.96); // lunar dust darkens the lower panels
+    // regolith dust: heavy up to about 1.2 m, fading out by 3.1 m, with a per-vertex mottle so it is never a flat wash.
+    // the tint is warm grey (r > g > b) like real lunar dust, never the clean darker-white a shadow would give.
+    const hv = Math.sin(tmp.x * 12.9898 + tmp.y * 78.233 + tmp.z * 37.719) * 43758.5453, n = hv - Math.floor(hv);
+    const f = Math.min(1, Math.max(0, (3.1 - tmp.y) / 1.9)) * (0.62 + 0.38 * n);
+    const k = 1 - 0.5 * f;
+    col.push(k, k * (1 - 0.045 * f), k * (1 - 0.12 * f));
   }
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); return g;
 }
@@ -152,6 +165,22 @@ function crackTex() {
   g.lineWidth = 1.6; for (let r = 40; r < 170; r += 38) { g.beginPath(); for (let k = 0; k <= 9; k++) { const a = (k / 9) * Math.PI * 2; const rr = r + (rn() - 0.5) * 14; g.lineTo(ox + Math.cos(a) * rr, oy + Math.sin(a) * rr * 0.9); } g.stroke(); }
   return tex(c, 1, 1, true);
 }
+/** Dust thrown up by the wheels and sprayed back onto the body: a soft mottled splash with rising streaks. */
+function dustStreakTex() {
+  const c = cv(128, 128), g = c.getContext('2d')!;
+  g.translate(64, 78); g.scale(1, 0.6);
+  const gr = g.createRadialGradient(0, 0, 6, 0, 0, 58);
+  gr.addColorStop(0, 'rgba(96,91,84,0.62)'); gr.addColorStop(0.5, 'rgba(100,95,87,0.34)'); gr.addColorStop(1, 'rgba(104,99,90,0)');
+  g.fillStyle = gr; g.fillRect(-64, -64, 128, 128);
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  for (let i = 0; i < 30; i++) {   // fine spray rising off the splash
+    const x = 12 + Math.random() * 104, y0 = 60 + Math.random() * 34, h = 8 + Math.random() * 34;
+    g.strokeStyle = `rgba(110,104,94,${0.1 + Math.random() * 0.22})`; g.lineWidth = 1 + Math.random() * 2;
+    g.beginPath(); g.moveTo(x, y0); g.lineTo(x + (Math.random() - 0.5) * 10, y0 - h); g.stroke();
+  }
+  for (let i = 0; i < 90; i++) { g.fillStyle = `rgba(112,106,96,${0.1 + Math.random() * 0.26})`; g.beginPath(); g.arc(14 + Math.random() * 100, 40 + Math.random() * 70, 0.6 + Math.random() * 1.8, 0, 7); g.fill(); }
+  return tex(c, 1, 1, true);
+}
 
 export type Wheel = { side: number; x: number; front: boolean; hub: THREE.Group; steer: THREE.Group; spin: THREE.Group; links: (hubY: number) => void; rotor: THREE.MeshStandardMaterial; anchor: THREE.Vector3; name: string };
 export type RoverModel = ReturnType<typeof buildRoverModel>;
@@ -159,9 +188,9 @@ export type RoverModel = ReturnType<typeof buildRoverModel>;
 export function buildRoverModel() {
   const root = new THREE.Group(), chassis = new THREE.Group(); root.add(chassis);
   const panelMap = () => panelTexture('#f3f3f1', '#b4b8bb', 1, 1);
-  const body = std(0xffffff, 0.45, 0.15, { map: panelMap(), side: THREE.DoubleSide, vertexColors: true });
-  const white = std(0xf1f2f0, 0.45, 0.15, { map: panelMap() });
-  const bodyPlain = std(0xf1f2f0, 0.45, 0.15, { map: panelMap(), side: THREE.DoubleSide });
+  const body = std(0xffffff, 0.42, 0.22, { map: panelMap(), side: THREE.DoubleSide, vertexColors: true });
+  const white = std(0xf1f2f0, 0.42, 0.22, { map: panelMap() });
+  const bodyPlain = std(0xe9eae7, 0.46, 0.2, { map: panelMap(), side: THREE.DoubleSide });   // pre-dusted white: never showroom-clean
   const grey = std(NASA.grey, 0.45, 0.45), steel = std(0xb9bfc8, 0.35, 0.65), dark = std(0x23272d, 0.7, 0.35);
   const gold = std(NASA.gold, 0.32, 0.85, { bumpMap: crinkleTexture(3, 3), bumpScale: 2 }), copper = std(0xb87333, 0.35, 0.85), brass = std(0xc9a24a, 0.35, 0.8);
   const yellow = std(0xe8b923, 0.5, 0.2), red = std(NASA.red, 0.5, 0.2), blue = std(NASA.blue, 0.5, 0.2), hazard = std(0xffffff, 0.6, 0.1, { map: hazardTex() });
@@ -183,7 +212,7 @@ export function buildRoverModel() {
   }
 
   // ---- six wheels on independent tubular suspension ----
-  const tireM = std(0xffffff, 0.95, 0, { map: treadTex(), bumpMap: treadTex(), bumpScale: 1.6 });
+  const tireM = std(0xd9d5cc, 0.92, 0, { map: treadTex(), bumpMap: treadTex(), bumpScale: 1.6 });   // dusty pale rubber, not showroom white
   const prof = [[0.56, -0.36], [0.64, -0.41], [0.74, -0.43], [0.83, -0.38], [0.88, -0.3], [0.9, -0.2], [0.9, 0.2], [0.88, 0.3], [0.83, 0.38], [0.74, 0.43], [0.64, 0.41], [0.56, 0.36]].map(([r, y]) => new THREE.Vector2(r, y));
   const tireG = new THREE.LatheGeometry(prof, 80).rotateX(Math.PI / 2), hubM = std(0xffffff, 0.45, 0.3, { map: hubTex() });
   const coilM = std(0xffffff, 0.5, 0.3, { map: coilTex() });
@@ -277,6 +306,17 @@ export function buildRoverModel() {
     strut(cabG, V(4.8, 2.1, s * 1.2), V(4.9, Yb, s * 0.55), 0.035, steel); // lower nose diagonal
   }
   strut(cabG, V(4.75, 2.5, -1.25), V(4.75, 2.5, 1.25), 0.06, white); strut(cabG, V(XT, Yt, -1.1), V(XT, Yt, 1.1), 0.06, white);
+  // dust thrown back off the front wheels onto the lower cab flanks (static decals; bake skips transparent materials)
+  {
+    const splashM = new THREE.MeshBasicMaterial({ map: dustStreakTex(), transparent: true, opacity: 0.8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+    const splash = (x: number, y: number, z: number, ry: number, s = 1) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(1.2 * s, 0.9 * s), splashM); m.position.set(x, y, z); m.rotation.y = ry; cabG.add(m); return m;
+    };
+    for (const s of [-1, 1]) {
+      splash(3.05, 1.78, s * (cabHalf + 0.013), s < 0 ? Math.PI : 0);                 // behind the front wheels, on the cab flanks
+      splash(1.9, 1.66, s * (cabHalf + 0.013), s < 0 ? Math.PI : 0, 0.7);
+    }
+  }
   // brow visor with integrated light bar above the windscreen
   const brow = mk(cabG, rbox(0.4, 0.12, 2.6, 0.06), white, XT + 0.1, Yt + 0.1, 0); brow.rotation.z = -0.2;
   mk(cabG, rbox(0.08, 0.07, 2.2, 0.03), lampOn, XT + 0.3, Yt + 0.03, 0, false).rotation.z = -0.2;
@@ -413,14 +453,37 @@ export function buildRoverModel() {
   tube(bay, [V(-0.9, 2.5, 0), V(-0.4, 2.9, 0.3), V(0.3, 2.8, 0.5), V(0.9, 2.7, 0.9)], 0.04, copper); tube(bay, [V(-0.9, 2.3, 0), V(-0.3, 2.9, -0.3), V(0.4, 2.7, -0.5), V(0.9, 2.6, -0.9)], 0.04, brass);
   tube(bay, [V(0.1, 2.9, -1.0), V(0.5, 3.2, -0.2), V(0.9, 3.0, 0.5), V(1.2, 2.6, 1.0)], 0.03, std(0x1f4aa0, 0.5, 0.2));
   const solar = new THREE.Group(); solar.position.set((bx0 + bx1) / 2, 3.2, 0); solar.rotation.z = Math.atan2(0.4, bx1 - bx0); bay.add(solar);
-  const cellTex = (() => { const c = cv(128, 128), g = c.getContext('2d')!; g.fillStyle = '#12224d'; g.fillRect(0, 0, 128, 128); g.strokeStyle = '#8b97b8'; g.lineWidth = 2; g.strokeRect(1, 1, 126, 126); g.beginPath(); g.moveTo(64, 0); g.lineTo(64, 128); g.moveTo(0, 64); g.lineTo(128, 64); g.stroke(); return tex(c, 7, 7); })();
-  mk(solar, rbox(2.7, 0.05, 2.9, 0.02), std(0xffffff, 0.3, 0.5, { map: cellTex }));
+  // solar blanket: a 2x2-cell image (each cell a slightly different navy with its own faint highlight, hairline bus
+  // bars and dust speckle) so the array does not read as one flat repeated sticker
+  const cellTex = (() => {
+    const c = cv(256, 256), g = c.getContext('2d')!;
+    for (let cy = 0; cy < 2; cy++) for (let cx = 0; cx < 2; cx++) {
+      const X = cx * 128, Y = cy * 128;
+      const b = 22 + ((cx * 7 + cy * 13) % 5) * 4;   // per-cell tint variation
+      g.fillStyle = `rgb(${16 + b / 2},${28 + b},${64 + b})`; g.fillRect(X, Y, 128, 128);
+      const hl = g.createLinearGradient(X, Y, X + 128, Y + 128); hl.addColorStop(0, 'rgba(160,185,225,0.13)'); hl.addColorStop(0.4, 'rgba(140,165,205,0.03)'); hl.addColorStop(1, 'rgba(0,0,0,0.06)');
+      g.fillStyle = hl; g.fillRect(X, Y, 128, 128);
+      g.strokeStyle = '#8b97b8'; g.lineWidth = 3; g.strokeRect(X + 1, Y + 1, 126, 126);
+      g.strokeStyle = 'rgba(139,151,184,0.7)'; g.lineWidth = 1;
+      for (const t of [0.33, 0.66]) { g.beginPath(); g.moveTo(X + 128 * t, Y); g.lineTo(X + 128 * t, Y + 128); g.moveTo(X, Y + 128 * t); g.lineTo(X + 128, Y + 128 * t); g.stroke(); }
+    }
+    for (let i = 0; i < 240; i++) { g.fillStyle = `rgba(112,106,96,${0.06 + Math.random() * 0.18})`; g.beginPath(); g.arc(Math.random() * 256, Math.random() * 256, 0.5 + Math.random() * 1.6, 0, 7); g.fill(); }
+    return tex(c, 7, 7);
+  })();
+  mk(solar, rbox(2.7, 0.05, 2.9, 0.02), std(0xbcc3cc, 0.33, 0.62, { map: cellTex }));
   for (const s of [-1, 1]) mk(solar, rbox(2.75, 0.09, 0.09, 0.04), steel, 0, 0, s * 1.46); for (const x of [-1.37, 1.37]) mk(solar, rbox(0.09, 0.09, 2.95, 0.04), steel, x, 0, 0);
   for (const s of [-1, 1]) { const p = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.8), new THREE.MeshBasicMaterial({ map: meatball(), transparent: true })); p.position.set(0.1, 2.0, s * 1.47); if (s < 0) p.rotation.y = Math.PI; bay.add(p); }
 
   // ---- flatbed: deck, rails, tie-downs, cargo, tool rack, hitch ----
   const bed = new THREE.Group(); root.add(bed);
-  mk(bed, rbox(4.0, 0.12, 3.1, 0.05), std(0xffffff, 0.75, 0.35, { map: diamondTex(8, 6) }), -3.2, FLOOR_Y + 0.02, 0);
+  // dust sprayed back off the mid and rear wheels onto the bed rails
+  {
+    const splashM = new THREE.MeshBasicMaterial({ map: dustStreakTex(), transparent: true, opacity: 0.8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+    for (const s of [-1, 1]) for (const x of [-0.55, -4.55]) {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.8), splashM); m.position.set(x, 1.5, s * 1.56); m.rotation.y = s < 0 ? Math.PI : 0; bed.add(m);
+    }
+  }
+  mk(bed, rbox(4.0, 0.12, 3.1, 0.05), std(0xdfe0dc, 0.78, 0.3, { map: diamondTex(8, 6) }), -3.2, FLOOR_Y + 0.02, 0);   // dusty deck plate
   mk(bed, rbox(4.0, 0.3, 0.1, 0.05), white, -3.2, FLOOR_Y - 0.14, -1.5); mk(bed, rbox(4.0, 0.3, 0.1, 0.05), white, -3.2, FLOOR_Y - 0.14, 1.5);
   for (const s of [-1, 1]) {
     tube(bed, [V(-1.25, FLOOR_Y + 0.5, s * 1.5), V(-5.15, FLOOR_Y + 0.5, s * 1.5)], 0.025, steel, 4);

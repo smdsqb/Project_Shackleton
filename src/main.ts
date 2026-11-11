@@ -27,10 +27,42 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.5;
+renderer.toneMappingExposure = 1.32;
 document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
+
+// ---------- image-based lighting: a procedural lunar environment (black sky, one hard sun glare, a bright regolith
+// floor and a faint earthglow) run through PMREM. Without this, every metal, foil and glass surface in the scene
+// renders as flat matte paint; with it, gold foil, steel trim, portholes and windscreens pick up real reflections.
+{
+  const env = new THREE.Scene();
+  // regolith bounce: a big, fairly bright grey floor with a soft hotspot, not a uniform void
+  const ground = new THREE.Mesh(
+    new THREE.SphereGeometry(100, 24, 12, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0x565149, side: THREE.BackSide })
+  );
+  env.add(ground);
+  // the sun: a small intensely bright disc plus a broad faint halo (lunar glare is harsh and unfiltered)
+  const sunBlob = new THREE.Mesh(
+    new THREE.SphereGeometry(4, 16, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffffff })
+  );
+  sunBlob.position.set(38, 55, 22); env.add(sunBlob);
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(11, 16, 8),
+    new THREE.MeshBasicMaterial({ color: 0x3f3f4d })
+  );
+  halo.position.copy(sunBlob.position); env.add(halo);
+  // earthshine: a cool dim glow opposite the sun so shadow sides are not dead black
+  const earthGlow = new THREE.Mesh(
+    new THREE.SphereGeometry(9, 16, 8),
+    new THREE.MeshBasicMaterial({ color: 0x1c2f4d })
+  );
+  earthGlow.position.set(-55, 18, -30); env.add(earthGlow);
+  scene.environment = new THREE.PMREMGenerator(renderer).fromScene(env, 0.04).texture;
+  scene.environmentIntensity = 0.5; // reflections without turning the night sky milky
+}
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 30000);
 camera.position.set(-1.5, heightAt(0, 0) + EYE, 0.5);
 scene.add(camera);
