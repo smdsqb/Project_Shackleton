@@ -1,7 +1,9 @@
 // Dev-only hab/exterior viewer: the game's renderer/lighting rig with none of the simulation, so the hab
 // interior and the outpost props can be inspected (and screenshotted) fast. Not referenced by the game.
-// ?view=in  -> standing inside the hab, looking at the floor/wall junction where grime used to collect
-// ?view=out -> outside, looking at the tanks / array / berms
+// ?view=in     -> standing inside the hab, looking at the floor/wall junction where grime used to collect
+// ?view=out    -> outside, looking at the tanks / array / berms
+// ?view=lock   -> the inner airlock doorway from inside the hab (?door=inner|outer|both|none swings hatches)
+// ?view=outer  -> the outer hatch from the surface (?door=inner|outer|both|none)
 import * as THREE from 'three';
 import { Hab } from './hab';
 import { buildExterior } from './exterior';
@@ -66,9 +68,32 @@ if (view === 'in') {
 } else if (view === 'ring') {
   camera.position.set(13.7, 1.6, 6);
   camera.lookAt(-4, 0.1, -12);      // looking along the pad ring edge
+} else if (view === 'lock') {
+  // inner airlock doorway, seen from inside the hab, with the inner hatch swung open (dev-only inspection view)
+  const q = new URLSearchParams(location.search);
+  const which = Number(q.get('lock') ?? 0);
+  const door = q.get('door') ?? 'inner';
+  const locks = (hab as unknown as { locks: { inner: { open: boolean; k: number; pivot: THREE.Group; dir: number }, outer: { open: boolean; k: number; pivot: THREE.Group; dir: number } }[] }).locks;
+  if (locks?.[which]) {
+    for (const [d, o] of [[locks[which].inner, door === 'inner' || door === 'both'], [locks[which].outer, door === 'outer' || door === 'both']] as const) { d.open = o; d.k = o ? 1 : 0; d.pivot.rotation.y = d.dir * d.k * 1.7; }
+  }
+  camera.position.set(4.4, 1.7, 0.5);
+  camera.lookAt(7.4, 1.15, 0);
+} else if (view === 'outer') {
+  // outside the tunnel mouth, looking at the outer hatch (dev-only inspection view)
+  const q = new URLSearchParams(location.search);
+  const which = Number(q.get('lock') ?? 0);
+  const door = q.get('door') ?? 'outer';
+  const locks = (hab as unknown as { locks: { inner: { open: boolean; k: number; pivot: THREE.Group; dir: number }, outer: { open: boolean; k: number; pivot: THREE.Group; dir: number } }[] }).locks;
+  if (locks?.[which]) {
+    for (const [d, o] of [[locks[which].inner, door === 'inner' || door === 'both'], [locks[which].outer, door === 'outer' || door === 'both']] as const) { d.open = o; d.k = o ? 1 : 0; d.pivot.rotation.y = d.dir * d.k * 1.7; }
+  }
+  camera.position.set(11.0, 1.7, 2.6);
+  camera.lookAt(9.2, 1.2, 0);
 } else {
   camera.position.set(4.5, 2.2, 14);
   camera.lookAt(-10, 1.2, 9);       // tanks, berms, pad ring
 }
 
 renderer.setAnimationLoop(() => renderer.render(scene, camera));
+
