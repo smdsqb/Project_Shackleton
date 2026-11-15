@@ -98,7 +98,7 @@ for (let i = 0; i < 4000; i++) { const v = new THREE.Vector3().randomDirection()
 
 const arrayPos = new THREE.Vector3(14, heightAt(14, 6) + 12, 6);
 
-function regolithTexture() {
+function regolithCanvas() {
   const c = document.createElement('canvas'); c.width = c.height = 512;
   const g = c.getContext('2d')!, n = document.createElement('canvas');
   for (const [s, a] of [[16, 1], [64, 0.6], [256, 0.35]] as const) {
@@ -107,8 +107,12 @@ function regolithTexture() {
     for (let i = 0; i < s * s; i++) { const v = 90 + Math.random() * 165; id.data.set([v, v, v, 255], i * 4); }
     ng.putImageData(id, 0, 0); g.globalAlpha = a; g.drawImage(n, 0, 0, 512, 512);
   }
+  return c;
+}
+/** one shared regolith canvas so every tile samples the SAME noise: the whole floor reads as one continuous surface */
+function regolithTexture(c: HTMLCanvasElement, repeat: number) {
   const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(175, 175); t.anisotropy = renderer.capabilities.getMaxAnisotropy(); t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat, repeat); t.anisotropy = renderer.capabilities.getMaxAnisotropy(); t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
 
@@ -129,10 +133,17 @@ function patch(size: number, segs: number, yOff: number, mat: THREE.Material, ho
 }
 
 function buildWorld() {
-  const tex = regolithTexture();
-  patch(700, 600, 0, new THREE.MeshStandardMaterial({ color: 0x9a968f, map: tex, bumpMap: tex, bumpScale: 3, roughness: 1 }));
-  patch(10240, 320, -0.6, new THREE.MeshStandardMaterial({ color: 0x4f4c48, roughness: 1 }), 340);   // the 10 km near tile at 32 m cells
-  patch(41000, 512, -2.5, new THREE.MeshStandardMaterial({ color: 0x45423f, roughness: 1 }), 5100);   // the far tile (about 41 km) at 80 m cells: the whole crater bowl, floor and far wall
+  // one regolith material family for every tile: same colour, same texture, same bump, only the repeat changes with the
+  // patch size, so the near tile, the 10 km ring and the 41 km far tile light up as one continuous floor. The tile edges
+  // used to read as a lighting mismatch: flat dark untextured rings beside a bright textured tile.
+  const regCanvas = regolithCanvas();
+  const tileMat = (repeat: number) => {
+    const t = regolithTexture(regCanvas, repeat);
+    return new THREE.MeshStandardMaterial({ color: 0x9a968f, map: t, bumpMap: t, bumpScale: 3, roughness: 1 });
+  };
+  patch(700, 600, 0, tileMat(175));   // the near tile: 4 m texture period
+  patch(10240, 320, -0.15, tileMat(2560), 340);   // the 10 km near tile at 32 m cells, same 4 m texture period; only a 15 cm tuck under the near tile so there is no z-fight in the overlap and no visible step at the seam
+  patch(41000, 512, -0.35, tileMat(2050), 5100);   // the far tile (about 41 km) at 80 m cells: the whole crater bowl, floor and far wall; coarser 20 m texture period so it does not alias at that distance
 
   // rocks: shared displaced icosahedra (no two identical), each tinted per instance from grey to dusty brown,
   // with a pitted, mottled rock texture — flat single-colour blobs read as painted balls
@@ -177,7 +188,9 @@ function buildWorld() {
   crew = new Crew(scene, heightAt, hab);
   crewTalk = new CrewTalk(crew, camera, {
     houston: (t) => comms.voiceSend(t), world: crewWorld, jobs: crewJobs, startJob: crewStartJob, lastLog: () => sim.log[sim.log.length - 1]?.text ?? '',
-    canChat: () => started && locked && !comms.padOpen && !comms.isOpen && !ui.isTabletOpen,
+    canChat: () => started && locked && !comms.isOpen && !ui.isTabletOpen,
+    panelLine: (name, text, me) => comms.crewLog(name, text, me),
+    openPanel: (target, mode) => openComms('suit', target, mode),
   });
   crew.jobProbe = () => sim.job?.id ?? null;
   hab.onComms = () => openComms('hab');
@@ -244,10 +257,13 @@ const BUSY = 'CREW BUSY WITH ANOTHER TASK';
 function crewJobs() { return (Object.keys(JOBS) as JobId[]).map((id) => { const why = sim.canStart(id); return { id, ok: !why || why === BUSY, why: why && why !== BUSY ? why : '' }; }); }
 function crewStartJob(id: string) { const why = sim.canStart(id as JobId); if (why && why !== BUSY) return why; return sim.startJob(id as JobId, true); }
 const comms = new Comms({
-  mic: () => void crewTalk?.toggleMic('houston'),
+  mic: (target) => { if (target === 'crew') { void crewTalk?.toggleMic('crew'); return; } comms.warmLink(); void crewTalk?.toggleMic('houston'); },
+  crewText: (t) => void crewTalk?.converse(t),
+  crewAmbient: () => crewTalk?.ambient ?? true, setCrewAmbient: (v) => { if (crewTalk) crewTalk.ambient = v; },
+  crewHandsFree: () => crewTalk?.handsFree ?? true, setCrewHandsFree: (v) => { if (crewTalk) crewTalk.handsFree = v; },
+  caption: (name, text, me) => crewTalk?.caption(name, text, me),
   telemetry, link, now: () => new Date(simMs), delayS: () => SIM.commsDelayS,
   onClose: () => { renderer.domElement.requestPointerLock(); },
-  onPad: (open, lines, live) => player.setPad(lines, live && open),
   rover: { telemetry: () => rover?.telemetry(), link: () => rover?.habLink() ?? { up: false, dist: 0, reason: 'THERE IS NO ROVER.' }, occupied: () => !!rover && rover.inside },
 });
 
@@ -258,16 +274,24 @@ const intro = document.getElementById('intro')!, enter = document.getElementById
 enter.addEventListener('click', () => { started = true; ensureAudio(); window.setTimeout(() => void crewTalk?.greet(), 3500); renderer.domElement.requestPointerLock(); intro.classList.add('leaving');  window.setTimeout(() => { if (intro.classList.contains('leaving')) intro.style.display = 'none'; }, 1300); });   // hide the intro fully once it has faded: its CSS star animation keeps the compositor busy otherwise
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
-  if (!locked && comms.padOpen) comms.closePad();
   if (!locked && !comms.isOpen && !ui.isTabletOpen) { enter.textContent = 'RESUME'; intro.classList.remove('leaving'); keys.clear(); }
 });
 renderer.domElement.addEventListener('click', () => { if (!locked && !comms.isOpen && !ui.isTabletOpen && intro.classList.contains('leaving')) renderer.domElement.requestPointerLock(); });
-function openComms(mode: 'hab' | 'rover' = 'hab') { keys.clear(); document.exitPointerLock(); comms.open(mode); }
+function openComms(mode: 'hab' | 'rover' | 'suit' = 'suit', target: 'houston' | 'crew' = 'houston', commMode: 'voice' | 'text' = 'voice') { keys.clear(); document.exitPointerLock(); comms.open(mode, target, mode === 'hab' && target === 'houston' ? 'text' : commMode); }
 addEventListener('mousemove', (e) => { if (!locked) return; yaw -= e.movementX * 0.0022; pitch = Math.max(-1.5, Math.min(1.5, pitch - e.movementY * 0.0022)); });
 addEventListener('keydown', (e) => {
   if (e.code === 'Tab') e.preventDefault();   // Tab closes comms; never let it move browser focus mid-game
-  if (comms.isOpen) return;
   ensureAudio();
+  // the mic keys keep working while the comms console is open, and a recording always answers ESC first
+  if (crewTalk?.recording) {
+    if (e.code === 'Escape') { crewTalk.cancel(); return; }
+    if ((e.code === 'KeyV' || e.code === 'KeyB') && !e.repeat) { void crewTalk.toggleMic(e.code === 'KeyV' ? 'crew' : 'houston'); return; }
+  }
+  if (comms.isOpen) {
+    if (e.code === 'Escape' || e.code === 'Tab') { comms.close(); return; }
+    if (!e.repeat && (e.code === 'KeyB' || e.code === 'KeyV')) { if (e.code === 'KeyB') comms.warmLink(); void crewTalk?.toggleMic(e.code === 'KeyB' ? 'houston' : 'crew'); return; }
+    return;
+  }
   const dg = e.code.startsWith('Digit') ? +e.code.slice(5) : 0;
   if (dir.active && dg >= 1 && dg <= dir.active.choices.length) { dir.resolve(dg - 1); return; }
   if (dir.active && e.code === 'KeyH') { ui.ask(); return; }
@@ -278,14 +302,14 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Escape' && crewTalk?.recording) crewTalk.cancel();
   if (!locked) return;
   if (e.code === 'KeyV' && !e.repeat) { void crewTalk?.toggleMic(); return; }
-  if (e.code === 'KeyT' && !e.repeat) { e.preventDefault(); crewTalk?.openText(); return; }
-  if (e.code === 'KeyB' && !e.repeat) { void (async () => { if (crewTalk?.recording) { void crewTalk.toggleMic('houston'); return; } if (await comms.ensureReady()) void crewTalk?.toggleMic('houston'); })(); return; }
+  if (e.code === 'KeyT' && !e.repeat) { e.preventDefault(); openComms('suit', 'crew', 'text'); return; }   // the comms console on the crew text channel
+  if (e.code === 'KeyB' && !e.repeat) { comms.warmLink(); void crewTalk?.toggleMic('houston'); return; }   // the mic opens at once; the Earth link warms up in parallel
   if (e.code === 'KeyE') { if (rover?.hasPrompt) rover.press(); else hab?.press(); }
   if (e.code === 'KeyF' && locked && !e.repeat) hab?.press2();
   else if (e.code === 'KeyL' && rover?.inside) rover.toggleLights();
   else if (e.code === 'KeyX' && rover?.mode === 'driving') rover.toggleParkBrake();
   else if (e.code === 'KeyR' && rover?.mode === 'driving') rover.onRadio?.();
-  else if (e.code === 'KeyC' && !e.repeat) { if (rover?.inside) rover.onRadio?.(); else void comms.togglePad(); }
+  else if (e.code === 'KeyC' && !e.repeat) { if (rover?.inside) rover.onRadio?.(); else comms.toggle(); }   // the comms console: Houston or Crew, then Voice or Text
   else if (e.code === 'KeyM') { keys.clear(); document.exitPointerLock(); ui.open(); }
   else if (e.code === 'KeyP') sim.setArray(sim.arrayMode === 'deployed' ? 'retracted' : 'deployed');
 });
@@ -337,7 +361,7 @@ function frame() {
     else if (sim.lockdown) { recallT = 0; ui.banner(`LOCKDOWN · ${sim.lockdown.reason} · HATCHES SEALED`, 'calm'); }
     else if (sim.shelter) { recallT = 0; ui.banner(crew && !crew.allIn ? 'STORM SHELTER · CREW COMING IN' : 'STORM SHELTER · CREW SAFE', 'calm'); }
     else { recallT = 0; ui.banner(null); }
-    if (sim.lockdown && !prevLock && locked && !comms.isOpen && !comms.padOpen) { keys.clear(); document.exitPointerLock(); ui.open(); }   // all eyes on the systems
+    if (sim.lockdown && !prevLock && locked && !comms.isOpen) { keys.clear(); document.exitPointerLock(); ui.open(); }   // all eyes on the systems
     prevLock = !!sim.lockdown;
     visorEl.classList.toggle('on', hab.suitOn);
   }
@@ -397,7 +421,7 @@ function frame() {
   }
   lamp.visible = !!hab && hab.exposed && hab.suitOn;
   player.setHeld(hab?.held ?? null); player.setSpray(!!hab?.spraying);
-  player.update(dt, camera.position, yaw, vel, onGround, !!hab?.suitOn, comms.padOpen, !!hab?.exposed);
+  player.update(dt, camera.position, yaw, vel, onGround, !!hab?.suitOn, !!hab?.exposed);
 
   sun.position.copy(camera.position).addScaledVector(sd, 600);
   sun.target.position.copy(camera.position);

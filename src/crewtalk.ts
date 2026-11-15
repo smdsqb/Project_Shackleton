@@ -24,18 +24,17 @@ export type CrewHost = {
   startJob: (id: string) => string;     // '' when started, else the reason it can't be
   lastLog: () => string;
   canChat: () => boolean;               // false while a menu/terminal is open or the sim is paused
+  /** mirror every captioned line into the comms console log (while the CREW target is selected) */
+  panelLine?: (name: string, text: string, me: boolean) => void;
+  /** open the comms console on a target/mode (used when speech fails and typing is the fallback) */
+  openPanel?: (target: 'houston' | 'crew', mode: 'voice' | 'text') => void;
 };
 
 const CSS = `#chint{position:fixed;bottom:12px;right:16px;font-size:10px;letter-spacing:.18em;color:#7d8a99;pointer-events:none;z-index:5}#chint b{color:#4fd8ff;font-weight:600}
 #cstat{position:fixed;left:50%;bottom:11%;transform:translateX(-50%);display:none;padding:6px 16px;font-size:11px;letter-spacing:.2em;color:#4fd8ff;background:rgba(5,7,10,.78);border:1px solid rgba(79,216,255,.45);border-radius:3px;z-index:6;pointer-events:none;white-space:nowrap}
 #cstat.rec{color:#ff6b6b;border-color:#ff6b6b}#cstat.rec i{display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff4d4d;margin-right:8px;animation:cpulse 1s infinite}@keyframes cpulse{50%{opacity:.25}}
 #csub{position:fixed;left:50%;bottom:29%;transform:translateX(-50%);width:min(640px,90vw);display:flex;flex-direction:column;gap:5px;align-items:center;z-index:6;pointer-events:none}
-#csub div{max-width:100%;padding:5px 12px;font-size:13px;line-height:1.4;background:rgba(5,7,10,.72);border-radius:3px;color:#e9edf1;animation:cfade .25s}#csub .me{color:#7fd6ff}#csub .nm{color:#ffb000;letter-spacing:.14em;font-size:10px;margin-right:8px}@keyframes cfade{from{opacity:0}}
-#cbox{position:fixed;right:16px;bottom:16px;width:min(380px,92vw);display:none;flex-direction:column;background:rgba(4,12,18,.9);border:1px solid rgba(79,216,255,.45);border-radius:6px;z-index:7;backdrop-filter:blur(3px)}#cbox.on{display:flex}
-#cbox .hd{display:flex;justify-content:space-between;align-items:center;padding:7px 12px;font-size:11px;letter-spacing:.18em;color:#ffb000;border-bottom:1px solid rgba(79,216,255,.2)}
-#cbox label{font-size:10px;letter-spacing:.12em;color:#7d8a99;cursor:pointer;user-select:none}#cbox label input{margin-right:5px;vertical-align:-2px}
-#cbox form{display:flex;gap:8px;padding:9px 12px;align-items:center}#cbox form span{color:#4fd8ff}#cbox input[type=text]{flex:1;background:transparent;border:0;outline:0;color:#e9edf1;font:inherit;font-size:13px}
-#cbox button{background:transparent;border:1px solid rgba(79,216,255,.45);color:#4fd8ff;font:inherit;font-size:11px;padding:3px 9px;cursor:pointer;border-radius:3px}#cbox .opts{display:flex;flex-wrap:wrap;gap:6px 14px;padding:6px 12px;border-bottom:1px solid rgba(79,216,255,.12)}#cbox .tip{padding:0 12px 8px;font-size:10px;letter-spacing:.1em;color:#566}`;
+#csub div{max-width:100%;padding:5px 12px;font-size:13px;line-height:1.4;background:rgba(5,7,10,.72);border-radius:3px;color:#e9edf1;animation:cfade .25s}#csub .me{color:#7fd6ff}#csub .nm{color:#ffb000;letter-spacing:.14em;font-size:10px;margin-right:8px}@keyframes cfade{from{opacity:0}}`;
 
 const JOB_NAMES: Record<string, string> = { patch: 'patching the hull leak', sealant: 'sealing the leak from inside', clean: 'brushing the dust off the array', busfix: 'repairing the array power string', antenna: 're-pointing the antenna', bed: 'swapping the scrubber bed', stack: 'swapping the oxygenator stack', coolant: 'swapping the coolant pump', waterline: 'repairing the water line', extinguish: 'fighting the fire', isolate: 'isolating the battery pack', medic: 'treating the injured crew member', inspect: 'inspecting the hull and equipment', berm: 'piling regolith over the hab' };
 const ATTENTION = /\b(listen|attention|gather|huddle|assemble|hear me|over here|come (here|over|to me)|get (over )?here|to me)\b/i;
@@ -109,7 +108,7 @@ export class CrewTalk {
   lastBump = 0; voiceReplies = true; ambient = true; handsFree = true; recording = false; busy = false; greeted = false;
   private ctx: AudioContext | null = null; private stop: ((send: boolean) => void) | null = null;
   private cur: { an: AnalyserNode; data: Uint8Array<ArrayBuffer>; bot: Bot; pan: PannerNode | null; src: AudioBufferSourceNode } | null = null;
-  private hist = new Map<string, Turn[]>(); private statusEl: HTMLElement; private subEl: HTMLElement; private box: HTMLElement; private inp: HTMLInputElement;
+  private hist = new Map<string, Turn[]>(); private statusEl: HTMLElement; private subEl: HTMLElement;
   private statusT = 0; private fwd = new THREE.Vector3(); private tmp = new THREE.Vector3();
   private sceneT = 1e9; private sceneBusy = false; private sceneAbort = false; private recent: string[] = []; private lastInitiate = 0; private lastPair = ''; private jobAnn = new Map<string, number>();
   private micMode: { target: 'crew' | 'houston'; auto: boolean; force?: Bot } = { target: 'crew', auto: false };
@@ -117,19 +116,8 @@ export class CrewTalk {
   constructor(private crew: Crew, private camera: THREE.PerspectiveCamera, private host: CrewHost) {
     const st = document.createElement('style'); st.textContent = CSS; document.head.append(st);
     const mk = (tag: string, id: string, html = '') => { const e = document.createElement(tag); e.id = id; e.innerHTML = html; document.body.append(e); return e; };
-    mk('div', 'chint', '<b>V</b> TALK TO CREW &nbsp;·&nbsp; <b>B</b> RADIO HOUSTON &nbsp;·&nbsp; <b>T</b> TYPE');
+    mk('div', 'chint', '<b>V</b> CREW VOICE &nbsp;·&nbsp; <b>B</b> HOUSTON VOICE &nbsp;·&nbsp; <b>T</b> COMMS CONSOLE');
     this.statusEl = mk('div', 'cstat'); this.subEl = mk('div', 'csub');
-    this.box = mk('div', 'cbox', `<div class="hd"><span>CREW CHANNEL</span><label><input type="checkbox" id="cvoice" checked>VOICE REPLIES</label></div>
-      <div class="opts"><label><input type="checkbox" id="camb" checked>AMBIENT CHATTER</label><label><input type="checkbox" id="chf" checked>HANDS-FREE REPLIES</label></div>
-      <form autocomplete="off"><span>&gt;</span><input type="text" id="cin" maxlength="240" placeholder="say something to the crew…"><button type="button" id="cmic">MIC</button></form>
-      <div class="tip">NEAREST CREW MEMBER ANSWERS · SAY A NAME TO PICK ONE · SAY EVERYONE FOR ALL · SAY HOUSTON FOR THE RADIO · ESC CLOSES</div>`);
-    this.inp = this.box.querySelector('#cin')!;
-    const bind = (id: string, set: (v: boolean) => void) => this.box.querySelector<HTMLInputElement>(id)!.addEventListener('change', (e) => set((e.target as HTMLInputElement).checked));
-    bind('#cvoice', (v) => { this.voiceReplies = v; }); bind('#camb', (v) => { this.ambient = v; }); bind('#chf', (v) => { this.handsFree = v; });
-    this.box.querySelector('#cmic')!.addEventListener('click', () => { this.closeText(); void this.toggleMic(); });
-    this.box.querySelector('form')!.addEventListener('submit', (e) => { e.preventDefault(); const v = this.inp.value.trim(); this.inp.value = ''; this.closeText(); if (v) void this.converse(v); });
-    this.inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); this.closeText(); } });
-    this.inp.addEventListener('keyup', (e) => e.stopPropagation());
     this.crew.onBump = (b, k) => this.onBump(b, k);
     this.crew.onJobDone = (b, id) => this.jobDone(b, id);
   }
@@ -139,13 +127,12 @@ export class CrewTalk {
     clearTimeout(this.statusT); this.statusEl.className = rec ? 'rec' : ''; this.statusEl.innerHTML = (rec ? '<i></i>' : '') + text.replace(/[<>&]/g, ''); this.statusEl.style.display = text ? 'block' : 'none';
     if (ms) this.statusT = window.setTimeout(() => { this.statusEl.style.display = 'none'; }, ms);
   }
-  private line(name: string, text: string, me = false) {
+  /** on-screen caption; every captioned line also mirrors into the comms console log when the CREW target is open */
+  caption(name: string, text: string, me = false) {
     const d = document.createElement('div'); if (me) d.className = 'me'; d.innerHTML = `<span class="nm">${name.replace(/[<>&]/g, '')}</span>`; d.append(document.createTextNode(text));
     this.subEl.append(d); while (this.subEl.children.length > 3) this.subEl.firstChild?.remove(); setTimeout(() => d.remove(), 3500 + text.length * 70);
+    this.host.panelLine?.(name, text, me);
   }
-  get textOpen() { return this.box.classList.contains('on'); }
-  openText() { document.getElementById('chint')!.style.display = 'none'; this.box.classList.add('on'); this.inp.focus(); }
-  closeText() { document.getElementById('chint')!.style.display = ''; this.box.classList.remove('on'); this.inp.blur(); }
 
   // ------------------------------------------------------------ audio plumbing
   private ac(): AudioContext {
@@ -217,7 +204,7 @@ export class CrewTalk {
   private clock() { const d = new Date(); return { hour: d.getHours(), clock: `${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}, ${d.toLocaleDateString([], { weekday: 'long' })}` }; }
   /** caption + voice. stand=true makes the speaker stop and face the Commander while talking; with an order they keep moving and talk on the go. */
   private async speak(bot: Bot, text: string, radio: boolean, stand = true, pre?: Promise<AudioBuffer | null>, quiet = false) {
-    this.line(`${bot.spec.first} ${bot.spec.name}`.toUpperCase(), text);
+    this.caption(`${bot.spec.first} ${bot.spec.name}`.toUpperCase(), text);
     let buf: AudioBuffer | null = null;
     if (this.voiceReplies && !(quiet && this.cur)) { try { buf = pre ? await pre : await this.tts(text, bot); } catch { buf = null; } }
     if (stand && bot.sleepStage < 2) bot.convo = 'speak';
@@ -247,11 +234,11 @@ export class CrewTalk {
   async converse(text: string, force?: Bot) {
     if (this.busy) return; this.endScene(); this.busy = true; let followUp: Bot | null = null;
     try {
-      if (!force && HOUSTON.test(text) && this.host.houston) { this.line('YOU → HOUSTON', text, true); await this.host.houston(text); return; }
+      if (!force && HOUSTON.test(text) && this.host.houston) { await this.host.houston(text); return; }   // the comms console displays the Houston side itself
       if (isBroadcast(text)) { await this.broadcast(text); return; }
       const t = force && force.sleepStage < 2 ? { bot: force, d: 0 } : this.target(text); if (!t) { this.status('NOBODY IS AROUND TO HEAR YOU', 2500); return; }
       const bot = t.bot, radio = this.radioTo(bot);
-      this.line('YOU', text, true);
+      this.caption('YOU', text, true);
       if (bot.sleepStage < 2) bot.convo = 'think';
       this.status(`${bot.spec.first.toUpperCase()} IS THINKING…`);
       const res = await this.ask({ who: bot.spec.name, kind: 'chat', text, ctx: bot.ctx(), history: this.turns(bot), radio }, localReply(text, bot));
@@ -260,7 +247,7 @@ export class CrewTalk {
       this.remember(bot, { role: 'me', text }, { role: 'you', text: res.say });
       this.status('');
       // do it NOW and talk while doing it: movement orders start this instant, the voice line plays as they go
-      const { act: done, note } = this.execute(bot, act); if (note) this.line('BASE', note);
+      const { act: done, note } = this.execute(bot, act); if (note) this.caption('BASE', note);
       const moves = done.type !== 'none' && done.type !== 'emote';
       await this.speak(bot, res.say, radio, !moves);
       // keep it going like real people: a question gets a hands-free answer window; otherwise another crew member may chime in
@@ -273,7 +260,7 @@ export class CrewTalk {
   private async broadcast(text: string) {
     const p = this.camera.position;
     const near = [...this.crew.bots].sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z));
-    this.line('YOU', text, true); this.status('EVERYONE IS LISTENING…');
+    this.caption('YOU', text, true); this.status('EVERYONE IS LISTENING…');
     for (const b of near) if (b.sleepStage < 2) b.convo = 'think';
     const intent = (isOrder(text) || ATTENTION.test(text)) ? (parseIntent(text) ?? (ATTENTION.test(text) ? ({ type: 'come' } as CrewAction) : null)) : null;
     let replies: { who: string; say: string; do: CrewAction }[] = [];
@@ -290,7 +277,7 @@ export class CrewTalk {
       return { bot: b, say: r?.say || lines[i % 4], act, radio: this.radioTo(b) };
     });
     // everyone obeys at once...
-    for (const it of items) { const { act, note } = this.execute(it.bot, it.act); it.act = act; if (note) this.line('BASE', note); if (act.type === 'none' && it.bot.sleepStage < 2) it.bot.convo = 'listen'; }
+    for (const it of items) { const { act, note } = this.execute(it.bot, it.act); it.act = act; if (note) this.caption('BASE', note); if (act.type === 'none' && it.bot.sleepStage < 2) it.bot.convo = 'listen'; }
     // ...then they answer one after another (audio is fetched in parallel so there is no dead air between voices)
     const pre = items.map((it) => (this.voiceReplies ? this.tts(it.say, it.bot).catch(() => null) : Promise.resolve(null)));
     for (let i = 0; i < items.length; i++) { const it = items[i], moves = it.act.type !== 'none' && it.act.type !== 'emote'; await this.speak(it.bot, it.say, it.radio, !moves, pre[i]); }
@@ -341,14 +328,14 @@ export class CrewTalk {
         this.remember(bot, { role: 'you', text: res.say });
         bot.perform({ type: 'emote', emote: 'wave' }, p); await this.speak(bot, res.say, false);
       } finally { bot.convo = null; this.busy = false; }
-    } finally { this.greeted = true; this.sceneT = rnd(30, 50); }
+    } finally { this.greeted = true; this.sceneT = rnd(14, 24); }   // the first crew-to-crew scene comes quickly after the greeting
   }
 
   // ------------------------------------------------------------ ambient life: the crew chat with each other and with you
   private tickScene(dt: number) {
     this.sceneT -= dt; if (this.sceneT > 0) return;
-    this.sceneT = rnd(45, 90);
-    if (!this.ambient || !this.greeted || this.busy || this.recording || this.sceneBusy || this.cur || document.hidden || this.crew.alert || !this.host.canChat()) { this.sceneT = 10; return; }
+    this.sceneT = rnd(22, 45);   // crew-to-crew comms used to fire every 45-90 s, which read as "almost never": every 22-45 s now
+    if (!this.ambient || !this.greeted || this.busy || this.recording || this.sceneBusy || this.cur || document.hidden || this.crew.alert || !this.host.canChat()) { this.sceneT = 8; return; }
     void this.runScene();
   }
   private async runScene() {
@@ -356,7 +343,7 @@ export class CrewTalk {
     const near = this.crew.nearest(p, true), nearOk = !!near && near.d < 8 && !near.bot.convo && near.bot.sleepStage === 0, now = performance.now();
     this.sceneBusy = true; this.sceneAbort = false;
     try {
-      if (nearOk && now - this.lastInitiate > 110000 && (free.length < 2 || Math.random() < 0.35)) { this.lastInitiate = now; await this.initiate(near!.bot); }
+      if (nearOk && now - this.lastInitiate > 45000 && (free.length < 2 || Math.random() < 0.3)) { this.lastInitiate = now; await this.initiate(near!.bot); }   // a crew member starts talking to YOU at most every 45 s, so most scenes are crew-to-crew banter
       else if (free.length >= 2) await this.crewBanter(free, nearOk);
     } finally { this.sceneBusy = false; for (const b of this.crew.bots) b.chat = null; }
   }
@@ -376,7 +363,7 @@ export class CrewTalk {
     const toPlayer = nearPlayer && Math.random() < 0.4 && Math.hypot(p.x - o.x, p.z - o.z) < 9;
     let lines: { who: string; say: string; emote?: string }[] = [], ask = false;
     try {
-      const r = await fetch('/api/crew', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(12000), body: JSON.stringify({ kind: 'banter', who: a.spec.name, other: o.spec.name, ctxA: a.ctx(), ctxB: o.ctx(), world: this.host.world(), jobs: this.host.jobs(), recent: this.recent.slice(-8), toPlayer, ...this.clock() }) });
+      const r = await fetch('/api/crew', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(18000), body: JSON.stringify({ kind: 'banter', who: a.spec.name, other: o.spec.name, ctxA: a.ctx(), ctxB: o.ctx(), world: this.host.world(), jobs: this.host.jobs(), recent: this.recent.slice(-8), toPlayer, ...this.clock() }) });
       if (r.ok) { const j = (await r.json()) as { lines?: typeof lines; ask?: boolean }; lines = j.lines ?? []; ask = j.ask === true; }
     } catch { lines = []; }
     if (lines.length < 2 || this.sceneAbort || this.busy || this.recording) return;
@@ -425,7 +412,7 @@ export class CrewTalk {
     this.endScene(); const auto = !!opt.auto; this.micMode = { target, auto, force: opt.force };
     let stream: MediaStream;
     try { stream = await this.micStream(); }
-    catch (e) { console.warn('[crew mic]', e); if (!auto) { this.status(this.micMessage(e), 7000); this.openText(); } return; }
+    catch (e) { console.warn('[crew mic]', e); if (!auto) { this.status(this.micMessage(e), 7000); this.host.openPanel?.(target, 'text'); } return; }
     const c = this.ac(), node = c.createMediaStreamSource(stream), an = c.createAnalyser(); an.fftSize = 1024; node.connect(an);
     const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find((m) => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) ?? '';
     const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined), chunks: Blob[] = [];
@@ -445,7 +432,7 @@ export class CrewTalk {
     const tick = () => {
       if (done) return; an.getFloatTimeDomainData(buf); let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i]; const rms = Math.sqrt(s / buf.length), now = performance.now();
       if (now - t0 < 350) { noise += rms; nn++; } else if (rms > Math.max(0.018, (noise / Math.max(1, nn)) * 2.8)) { spoke = true; last = now; }
-      if (spoke && now - last > 1150) return finish(true); if (now - t0 > 14000) return finish(true); if (!spoke && now - t0 > (auto ? 6500 : 7000)) return finish(false);
+      if (spoke && now - last > 1400) return finish(true); if (now - t0 > 18000) return finish(true); if (!spoke && now - t0 > (auto ? 6500 : 7000)) return finish(false);   // a 1.4 s mid-sentence pause no longer cuts you off; the hard cap is 18 s
       setTimeout(tick, 50);
     };
     tick();
@@ -453,14 +440,27 @@ export class CrewTalk {
   cancel() { if (this.recording) this.stop?.(false); }
 
   private async transcribe(blob: Blob) {
-    const m = this.micMode; this.status(m.auto ? '' : 'TRANSCRIBING…'); this.busy = true; let text = '';
-    try {
-      const r = await fetch('/api/stt', { method: 'POST', headers: { 'Content-Type': blob.type || 'audio/webm' }, body: blob, signal: AbortSignal.timeout(16000) });
-      if (!r.ok) throw new Error('stt ' + r.status); text = String(((await r.json()) as { text?: string }).text ?? '').trim();
-    } catch { this.busy = false; if (!m.auto) { this.status('VOICE RECOGNITION UNAVAILABLE, TYPE INSTEAD (T)', 3500); this.openText(); } return; }
+    const m = this.micMode; this.status('TRANSCRIBING…'); this.busy = true; let text = '';
+    // one automatic retry: a single dropped request used to read as "voice recognition is broken"
+    const once = async () => {
+      try {
+        const r = await fetch('/api/stt', { method: 'POST', headers: { 'Content-Type': blob.type || 'audio/webm' }, body: blob, signal: AbortSignal.timeout(24000) });
+        if (!r.ok) throw new Error('stt ' + r.status);
+        return String(((await r.json()) as { text?: string }).text ?? '').trim();
+      } catch { return ''; }
+    };
+    text = await once();
+    if (!text) { await sleep(400); text = await once(); }   // brief pause, then the second attempt
+    if (!text) {
+      this.busy = false;
+      if (!m.auto) {
+        this.status('VOICE RECOGNITION UNAVAILABLE — SAY AGAIN, OR TYPE', 3500);
+        this.host.openPanel?.(m.target, 'text');   // the comms console opens on the SAME target, ready to type
+      }
+      return;
+    }
     this.busy = false;
-    if (!text) { if (!m.auto) this.status('DIDN’T CATCH THAT', 1800); return; }
-    if (m.target === 'houston') { this.line('YOU → HOUSTON', text, true); this.busy = true; try { await this.host.houston?.(text); } finally { this.busy = false; } return; }
+    if (m.target === 'houston') { this.status('UPLINK TO HOUSTON…'); this.busy = true; try { await this.host.houston?.(text); } finally { this.busy = false; this.status(''); } return; }
     await this.converse(text, m.force);
   }
 }
