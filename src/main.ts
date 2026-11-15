@@ -255,7 +255,7 @@ const comms = new Comms({
 let yaw = -Math.PI / 2, pitch = 0, vy = 0, onGround = true, locked = false;
 const keys = new Set<string>();
 const intro = document.getElementById('intro')!, enter = document.getElementById('enter') as HTMLButtonElement;
-enter.addEventListener('click', () => { started = true; ensureAudio(); window.setTimeout(() => void crewTalk?.greet(), 3500); renderer.domElement.requestPointerLock(); intro.classList.add('leaving'); });
+enter.addEventListener('click', () => { started = true; ensureAudio(); window.setTimeout(() => void crewTalk?.greet(), 3500); renderer.domElement.requestPointerLock(); intro.classList.add('leaving');  window.setTimeout(() => { if (intro.classList.contains('leaving')) intro.style.display = 'none'; }, 1300); });   // hide the intro fully once it has faded: its CSS star animation keeps the compositor busy otherwise
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
   if (!locked && comms.padOpen) comms.closePad();
@@ -271,6 +271,8 @@ addEventListener('keydown', (e) => {
   const dg = e.code.startsWith('Digit') ? +e.code.slice(5) : 0;
   if (dir.active && dg >= 1 && dg <= dir.active.choices.length) { dir.resolve(dg - 1); return; }
   if (dir.active && e.code === 'KeyH') { ui.ask(); return; }
+  if (e.code === 'KeyH' && !e.repeat) { helpEl.classList.toggle('on'); return; }   // key help: what every key does, one panel
+  if (e.code === 'Escape' && helpEl.classList.contains('on')) helpEl.classList.remove('on');
   if (ui.isTabletOpen) { if (e.code === 'KeyM' || e.code === 'Escape') ui.close(); return; }
   keys.add(e.code);
   if (e.code === 'Escape' && crewTalk?.recording) crewTalk.cancel();
@@ -292,9 +294,8 @@ addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; cam
 
 // ---------- HUD ----------
 const taskEl = document.getElementById('task')!, taskLbl = taskEl.querySelector('.lbl')!, taskBar = taskEl.querySelector('i') as HTMLElement, visorEl = document.getElementById('visor')!;
-const hud = document.getElementById('hud')!, promptEl = document.getElementById('prompt')!, toastEl = document.getElementById('toast')!;
-const cls = (v: boolean, bad = false) => (v ? (bad ? 'bad' : 'warn') : 'ok');
-const row = (k: string, v: string, c = 'ok') => `<div class="row"><span class="k">${k}</span><span class="${c}">${v}</span></div>`;
+const promptEl = document.getElementById('prompt')!, toastEl = document.getElementById('toast')!;
+const helpEl = document.getElementById('help')!;
 const lookDir = new THREE.Vector3();
 const wrapPi = (a: number) => ((((a + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) - Math.PI;
 const ui = new UI({
@@ -303,36 +304,14 @@ const ui = new UI({
 });
 // one fixed clock; it eases to 60x by itself while a decision card is open or someone is on EVA, so nothing outruns the player
 function clockRate() { const slow = dir.active || hab?.busy || hab?.suitOn || sim.cmdExposed || rover?.inside || rover?.busy; return slow ? 60 : SIM.timeRate; }
-function drawHud(az: number, el: number) {
-  const day = MISSION_DAY0 + Math.floor(sim.t / 24), o2Days = sim.o2Days, b = (sim.batteryKwh / sim.batteryCap) * 100;
-  hud.innerHTML = `<h1>PROJECT SHACKLETON</h1>` +
-    row('SIM CLOCK', new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC') + row('MISSION DAY', `${day} · ${(sim.t / 24).toFixed(1)} / ${SIM.missionDays}`) +
-    row('SUN EL / AZ', `${(el * 57.2958).toFixed(2)}° / ${(az * 57.2958).toFixed(0)}°`) +
-    row('SUN DATA', sunLive ? 'JPL HORIZONS' : 'APPROXIMATE', sunLive ? 'ok' : 'warn') +
-    (getSite()?.craterDir ? row('CRATER INTERIOR', (() => { const c = getSite()!.craterDir!, b = ((Math.atan2(c.x, -c.z) * 180) / Math.PI + 360) % 360; return `${['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(b / 45) % 8]} ${b.toFixed(0)}°  ·  RIM CREST AT THE PAD`; })()) : '') +
-    row('ARRAY', sim.sunlit ? 'SUNLIT' : 'SHADOW', sim.sunlit ? 'ok' : 'bad') +
-    row('POWER GEN / LOAD', `${sim.genKw.toFixed(1)} / ${sim.loadKw.toFixed(1)} kW`, cls(sim.genKw < sim.loadKw)) +
-    row('BATTERY', `${b.toFixed(1)} %`, cls(b < 25, b < 10)) +
-    row('CABIN', `O2 ${sim.ppO2.toFixed(1)} kPa · ${sim.pressureKpa.toFixed(0)} kPa · ${sim.tempC.toFixed(0)} C`, cls(sim.ppO2 < 19.5 || sim.pressureKpa < 95, sim.ppO2 < 17)) +
-    row('O2 TANK', `${sim.o2Kg.toFixed(0)} kg · ${o2Days > 900 ? 'steady' : o2Days.toFixed(0) + ' d'}`, cls(o2Days < 40, o2Days < 15)) +
-    row('CO2', `${sim.co2.toFixed(2)} mmHg`, cls(sim.co2 > 4, sim.co2 > 6)) +
-    row('CREW HEALTH', `${sim.health.toFixed(0)} %`, cls(sim.health < 75, sim.health < 40)) +
-    row('CREW DOSE', `${sim.doseMsv.toFixed(2)} mSv · you ${sim.cmdDoseMsv.toFixed(2)}`, cls(sim.doseMsv > 125, sim.doseMsv > 250)) +
-    row('FLARES (3 D)', flare, cls(sim.radMult > 1)) +
-    row('COMMS DELAY', `${SIM.commsDelayS.toFixed(2)} s one-way`) +
-    row('RADIO', comms.padOpen ? 'OPEN · TAB TO CLOSE' : 'PRESS C TO CALL HOUSTON') +
-    row('EARTH LINK', !sim.linkOk ? (sim.blackoutLeft > 0 ? 'BLACKOUT' : 'ANTENNA FAULT') : SIM.commsAlwaysOn ? 'ONLINE · 24x7 TEST MODE' : link().up ? 'ACQUIRED' : 'LOS', link().up ? 'ok' : 'bad') +
-    row('EARTH IN VIEW', earthVisible ? `YES · EL ${(earthEl * 57.2958).toFixed(1)}°` : 'NO · LINE OF SIGHT BLOCKED', earthVisible ? 'ok' : 'warn') +
-    (hab ? hab.status().map(([k, v, c]) => row(k, v, c)).join('') : '') +
-    (rover ? rover.status().map(([k, v, c]) => row(k, v, c)).join('') : '');
-}
+
 
 // ---------- loop ----------
 const clock = new THREE.Clock();
-let hudT = 0, litT = 0, bobT = 0, frameN = 0;
+let litT = 0, bobT = 0, frameN = 0;
 // adaptive resolution: the render scale floats between 1.0 and the device cap, so a weak GPU sheds pixels instead of frames
 const prCap = renderer.getPixelRatio();
-let pr = prCap, msAvg = 16, prT = 0;
+let pr = Math.min(prCap, 1.5), msAvg = 16, prT = 0;   // start at 1.5x instead of the full cap: the first seconds stay smooth, and it climbs if the GPU has headroom
 const fwd = new THREE.Vector3(), rgt = new THREE.Vector3(), mv = new THREE.Vector3(), sd = new THREE.Vector3();
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -425,7 +404,7 @@ function frame() {
   sunDisc.position.copy(camera.position).addScaledVector(sd, 3000);
   earth.position.copy(camera.position).add(new THREE.Vector3(e.x, e.y, e.z).multiplyScalar(3000));
 
-  litT += dt; hudT += dt;
+  litT += dt;
   if (started) {   // steer the render scale toward ~50-75 fps; touch the drawing buffer only when the bucket actually changes
     msAvg += (dt * 1000 - msAvg) * Math.min(1, dt * 0.75); prT += dt;
     if (prT > 2) {
@@ -436,7 +415,6 @@ function frame() {
     }
   }
   if (litT > 0.25) { litT = 0; sim.sunlit = isSunlit(arrayPos, sd); earthVisible = earthEl > 0.003 && isSunlit(dishPos, earthDir); }
-  if (hudT > 0.25) { hudT = 0; drawHud(s.az, s.el); }
   if (fx.shake > 0.01) { const a = 0.16 * fx.shake; shakeOff.set((Math.random() - 0.5) * a, (Math.random() - 0.5) * a * 0.7, (Math.random() - 0.5) * a); camera.position.add(shakeOff); camera.rotation.x += (Math.random() - 0.5) * 0.035 * fx.shake; camera.rotation.z += (Math.random() - 0.5) * 0.06 * fx.shake; }
   renderer.render(scene, camera);
   requestAnimationFrame(frame);

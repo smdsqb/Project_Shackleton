@@ -9,10 +9,19 @@
   :root { --bg:#05070a; --fg:#d7dde5; --amber:#ffb000; --cyan:#4fd8ff; --red:#ff4d4d; }
   html, body { margin:0; height:100%; background:var(--bg); overflow:hidden; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; color:var(--fg); }
   canvas { display:block; }
-  #hud { position:fixed; top:16px; left:16px; padding:12px 14px; min-width:250px; font-size:12px; line-height:1.7; background:rgba(5,7,10,.62); border:1px solid rgba(79,216,255,.25); border-radius:6px; pointer-events:none; }
-  #hud h1 { margin:0 0 6px; font-size:12px; letter-spacing:.2em; color:var(--amber); }
-  #hud .row { display:flex; justify-content:space-between; gap:18px; }
-  #hud .k { color:#7d8a99; } .ok { color:var(--cyan); } .warn { color:var(--amber); } .bad { color:var(--red); }
+  .ok { color:var(--cyan); } .warn { color:var(--amber); } .bad { color:var(--red); }
+  #helpHint { position:fixed; right:14px; bottom:14px; padding:6px 10px; font-size:10px; letter-spacing:.22em; color:#7d8a99; background:rgba(5,7,10,.55); border:1px solid rgba(125,138,153,.35); border-radius:6px; pointer-events:none; }
+  #helpHint b { color:var(--cyan); font-weight:normal; }
+  #help { position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:4; background:rgba(3,5,8,.55); }
+  #help.on { display:flex; }
+  #help .sheet { width:min(620px,92vw); max-height:94vh; overflow:auto; padding:16px 24px; background:rgba(5,8,13,.92); border:1px solid rgba(79,216,255,.35); border-radius:8px; }
+  #help h2 { margin:0 0 2px; font-size:13px; letter-spacing:.3em; color:var(--amber); }
+  #help p.sub { margin:1px 0 10px; font-size:10px; letter-spacing:.14em; color:#7d8a99; }
+  #help h3 { margin:10px 0 5px; font-size:10px; letter-spacing:.28em; color:var(--cyan); border-bottom:1px solid rgba(79,216,255,.25); padding-bottom:4px; }
+  #help .k { display:grid; grid-template-columns:104px 1fr; gap:3px 12px; font-size:11px; line-height:1.4; }
+  #help .k b { color:var(--fg); font-weight:normal; }
+  #help .k span { color:#93a0ae; }
+  #help .close { margin-top:12px; font-size:10px; letter-spacing:.22em; color:#7d8a99; }
   #xh { position:fixed; left:50%; top:50%; width:4px; height:4px; margin:-2px; border-radius:50%; background:rgba(215,221,229,.55); pointer-events:none; }
   #prompt, #toast { position:fixed; left:50%; transform:translateX(-50%); display:none; padding:8px 18px; font-size:12px; letter-spacing:.18em; background:rgba(5,7,10,.72); pointer-events:none; z-index:2; }
   #prompt { bottom:16%; border:1px solid rgba(79,216,255,.45); color:var(--cyan); }
@@ -39,9 +48,46 @@
 </style>
 </head>
 <body>
-<div id="hud"></div>
 <div id="visor"></div>
 <div id="xh"></div><div id="prompt"></div><div id="toast"></div>
+<div id="helpHint">PRESS <b>H</b> FOR KEY HELP</div>
+<div id="help"><div class="sheet">
+  <h2>KEY CONTROLS</h2>
+  <p class="sub">PRESS H OR ESC TO CLOSE</p>
+  <h3>MOVING</h3>
+  <div class="k">
+    <b>W A S D</b><span>walk (drive when you are in the rover)</span>
+    <b>SHIFT</b><span>sprint (not in a suit)</span>
+    <b>SPACE</b><span>jump outside - rover brake while driving</span>
+  </div>
+  <h3>INTERACTING</h3>
+  <div class="k">
+    <b>E</b><span>use what you stand at: hatches, racks, benches, the rover, the suit rack</span>
+    <b>F</b><span>second action of the same thing: check a gauge, discharge the extinguisher</span>
+    <b>M</b><span>crew tablet: power, life support, repairs, medical (ESC closes)</span>
+  </div>
+  <h3>TALKING</h3>
+  <div class="k">
+    <b>C</b><span>wrist radio to Houston (TAB closes it)</span>
+    <b>T</b><span>text chat with the crew</span>
+    <b>V</b><span>voice chat with the crew (microphone)</span>
+    <b>B</b><span>voice call to Houston over the radio</span>
+  </div>
+  <h3>ROVER</h3>
+  <div class="k">
+    <b>L</b><span>rover lamps, once you are inside</span>
+    <b>X</b><span>parking brake while driving</span>
+    <b>R</b><span>rover radio while driving</span>
+  </div>
+  <h3>OUTPOST / EVENTS</h3>
+  <div class="k">
+    <b>P</b><span>deploy or retract the solar array</span>
+    <b>1 - 3</b><span>pick an option on an event card</span>
+    <b>H</b><span>this panel - ask Houston while an event card is open</span>
+    <b>ESC</b><span>pause; cancels a voice recording</span>
+  </div>
+  <div class="close">ALL SYSTEMS DATA LIVES ON THE TABLET (M).</div>
+</div></div>
 <div id="task"><div class="lbl"></div><div class="bar"><i></i></div></div>
 <div id="intro"><div class="stars"></div><div class="panel">
 <div class="eyebrow">NASA SPACE APPS 2026 &middot; LUNAR SOUTH POLE</div>
@@ -49,7 +95,7 @@
 <div class="coords">89.9&deg;S &middot; RIM OF SHACKLETON CRATER</div>
 <ul id="boot"></ul>
 <button id="enter" disabled>INITIALISING</button>
-<div class="keys">W A S D &nbsp;move &nbsp;&middot;&nbsp; SHIFT &nbsp;sprint &nbsp;&middot;&nbsp; SPACE &nbsp;jump &nbsp;&middot;&nbsp; E &nbsp;use &nbsp;&middot;&nbsp; F &nbsp;second action &nbsp;&middot;&nbsp; C &nbsp;radio (TAB closes it) &nbsp;&middot;&nbsp; ESC &nbsp;pause<br>L &nbsp;rover lamps &nbsp;&middot;&nbsp; X &nbsp;parking brake &nbsp;&middot;&nbsp; R &nbsp;rover radio &nbsp;&middot;&nbsp; M &nbsp;crew tablet &nbsp;&middot;&nbsp; P &nbsp;array &nbsp;&middot;&nbsp; 1-3 &nbsp;decide &nbsp;&middot;&nbsp; H &nbsp;ask Houston</div>
+<div class="keys">W A S D &nbsp;move &nbsp;&middot;&nbsp; SHIFT &nbsp;sprint &nbsp;&middot;&nbsp; SPACE &nbsp;jump &nbsp;&middot;&nbsp; E &nbsp;use &nbsp;&middot;&nbsp; F &nbsp;second action &nbsp;&middot;&nbsp; C &nbsp;radio (TAB closes it) &nbsp;&middot;&nbsp; ESC &nbsp;pause<br>L &nbsp;rover lamps &nbsp;&middot;&nbsp; X &nbsp;parking brake &nbsp;&middot;&nbsp; R &nbsp;rover radio &nbsp;&middot;&nbsp; M &nbsp;crew tablet &nbsp;&middot;&nbsp; P &nbsp;array &nbsp;&middot;&nbsp; 1-3 &nbsp;decide &nbsp;&middot;&nbsp; H &nbsp;key help</div>
 <div class="keys" style="margin-top:10px;color:#8b97a6;letter-spacing:.06em;font-size:11px;max-width:560px;line-height:1.6">MISSION: keep 5 crew alive at Shackleton for 14 days. Every watt, litre and millisievert is a trade-off. When an alarm sounds you have seconds to decide, and Houston is a round trip away. Time is paused until you click.</div>
 </div></div>
 <script type="module" src="/src/main.ts"></script>
