@@ -134,8 +134,14 @@ export class Hab {
     const rib = wornMat(0xdfe3e8, 'metal', { rough: 0.5, metal: 0.3, repeat: 2 });
     for (let i = 0; i < 8; i++) { const t = mesh(new THREE.TorusGeometry(R - 0.07, 0.05, 10, 48, P), rib, 0, WALL_H, 0); t.scale.y = CAP_H / R; t.rotation.y = (i * P) / 8; }
     // assembled-drum cues: two circumferential hoop seams plus 14 vertical panel-joint covers on the hull,
-    // each fastened with a bolt head, so the shell reads as riveted sheets rather than one moulded tube
-    for (const hy of [0.78, 1.52]) mesh(new THREE.TorusGeometry(R + 0.015, 0.045, 8, 96).rotateX(-P / 2), trimM, 0, hy, 0, this.root, true);
+    // each fastened with a bolt head, so the shell reads as riveted sheets rather than one moulded tube.
+    // The hoops are split into two arcs that stop short of both airlock doorways: a full ring would cross
+    // the openings and read, from inside the hab, as a silver rod bridging the hatch.
+    const hoopGap = Math.asin(0.86 / (R + 0.015));
+    for (const hy of [0.78, 1.52]) for (const rof of [hoopGap, Math.PI + hoopGap]) {
+      const hoop = mesh(new THREE.TorusGeometry(R + 0.015, 0.045, 8, 72, Math.PI - 2 * hoopGap).rotateX(-P / 2), trimM, 0, hy, 0, this.root, true);
+      hoop.rotation.y = rof;
+    }
     for (let i = 0; i < 14; i++) {
       const th = (i / 14) * P * 2 + 0.11;
       if (Math.abs(th - P / 2) < 0.35 || Math.abs(th - (3 * P) / 2) < 0.35 || Math.abs(th - (5 * P) / 2) < 0.35 || Math.abs(th - (7 * P) / 2) < 0.35) continue;   // keep the airlock tunnels clear
@@ -405,19 +411,21 @@ export class Hab {
       const fs = archOuter(0.8, ST), fh = new THREE.Path(); fh.moveTo(-HW, 0.02); fh.lineTo(-HW, ST); fh.absarc(0, ST, HW, P, 0, true); fh.lineTo(HW, 0.02); fh.lineTo(-HW, 0.02); fs.holes.push(fh);
       const fr = new THREE.Mesh(new THREE.ExtrudeGeometry(fs, { depth: 0.16, bevelEnabled: false, curveSegments: 28 }).translate(0, 0, -0.08).rotateY(-P / 2), frameM); fr.position.set(u, 0, 0); fr.castShadow = fr.receiveShadow = true; g.add(fr);
       const pivot = new THREE.Group(); pivot.position.set(u, 0, -HW); g.add(pivot);
-      // door leaf: the same arch, with a round window cut clean through it, glazed with thin see-through glass
-      const lw = HW - 0.015, sh = new THREE.Shape(); sh.moveTo(-lw, 0.04); sh.lineTo(lw, 0.04); sh.lineTo(lw, ST); sh.absarc(0, ST, lw, 0, P, false); sh.lineTo(-lw, 0.04);
+      // door leaf: the same arch, with a round window cut clean through it, glazed with thin see-through glass;
+      // the leaf runs 5 mm proud of the frame opening so the closed hatch buries its edge in the frame - no slit to peek through
+      const lw = HW + 0.005, sh = new THREE.Shape(); sh.moveTo(-lw, 0.04); sh.lineTo(lw, 0.04); sh.lineTo(lw, ST); sh.absarc(0, ST, lw, 0, P, false); sh.lineTo(-lw, 0.04);
       const hole = new THREE.Path(); hole.absarc(0, 1.5, 0.24, 0, P * 2, true); sh.holes.push(hole);
       const leaf = new THREE.Mesh(new THREE.ExtrudeGeometry(sh, { depth: 0.12, bevelEnabled: false, curveSegments: 40 }).translate(0, 0, -0.06).rotateY(-P / 2), doorM);
       leaf.position.set(0, 0, HW); leaf.castShadow = leaf.receiveShadow = true; pivot.add(leaf);
       const glassM = new THREE.MeshPhysicalMaterial({ color: 0xcfe9ff, roughness: 0.04, metalness: 0, transparent: true, opacity: 0.13, depthWrite: false, side: THREE.DoubleSide });
       const glass = new THREE.Mesh(new THREE.CircleGeometry(0.24, 40).rotateY(P / 2), glassM); glass.position.set(0, 1.5, HW); pivot.add(glass);
       for (const s of [1, -1]) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.035, 10, 40).rotateY(P / 2), frameM); ring.position.set(s * 0.065, 1.5, HW); pivot.add(ring); }
-      const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.035, 12, 28), mat(NASA.red)); wheel.position.set(0.09 * dir, 0.95, HW); wheel.rotation.y = P / 2; pivot.add(wheel);
+      const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.035, 12, 28), mat(NASA.red)); wheel.position.set(-0.09, 0.95, HW); wheel.rotation.y = P / 2; pivot.add(wheel);   // hatch wheel on the approach side of the leaf
       const lampM = new THREE.MeshBasicMaterial({ color: 0xff4d4d }); const lamp = new THREE.Mesh(rbox(0.06, 0.12, 0.12, 0.02), lampM); lamp.position.set(u, 1.15, -0.75); g.add(lamp);
       return { open: false, k: 0, pivot, lamp: lampM, dir };
     };
-    const inner = mkDoor(R, 1), outer = mkDoor(R + TL, -1);
+    // both hatches swing out of the lock: the inner one opens into the hab, the outer one out onto the surface
+    const inner = mkDoor(R, -1), outer = mkDoor(R + TL, 1);
     const lbl = label(name, 0.5); lbl.position.set(R + TL / 2, 1.75, 0.79); lbl.rotation.y = Math.PI; g.add(lbl);
     return { name, ang, ca: Math.cos(ang), sa: Math.sin(ang), p: LOCK_P, cyc: null, inner, outer };
   }
@@ -430,8 +438,10 @@ export class Hab {
       const [u, v] = this.local(l, x, z), av = Math.abs(v);
       if (u > HAB_R - 0.1 && u < HAB_R + TL && av >= 0.72 && av < 0.95) return true;
       if (av < 0.8) {
-        if (!l.inner.open && u > HAB_R - 0.12 && u < HAB_R + 0.12) return true;
-        if (!l.outer.open && u > HAB_R + TL - 0.12 && u < HAB_R + TL + 0.12) return true;
+        // closed-hatch slabs are thicker than any single movement step, so nothing can step through a sealed hatch;
+        // the outer one also refuses an un-suited body while the lock is hard vacuum, open hatch or not
+        if (!l.inner.open && u > HAB_R - 0.16 && u < HAB_R + 0.16) return true;
+        if (u > HAB_R + TL - 0.16 && u < HAB_R + TL + 0.16 && (!l.outer.open || (l.p < 50 && !this.suitOn))) return true;
       }
       if (u > R_IN - 0.3 && u < HAB_R + 0.25 && av < 0.7) lane = true;
     }

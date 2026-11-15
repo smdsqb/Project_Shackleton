@@ -378,7 +378,7 @@ export class Bot {
     const s = shelterSpot(i); this.task = { id: 'shelter', slot: this.slot, w: 0, dur: [1e9, 1e9], stops: () => [s] }; this.taskLeft = 1e9; this.stops = [s]; this.si = 0; this.doing = false; this.dwell = s.dwell; this.free = false;
     const r = hypot(this.x, this.z), k = this.lk;
     if (k !== null && r > HAB_R - 0.5 && r < HAB_R + TL + 0.3) {   // caught inside an airlock: go back the way you came, never through a closed hatch
-      const a = k * PI, P = (u: number, ev?: string, wait?: number): Node => ({ ...pol(u, a), ev, wait, lk: k, lane: true }), iN = HAB_R - 1.4, iM = HAB_R + 0.9;
+      const a = k * PI, P = (u: number, ev?: string, wait?: number): Node => ({ ...pol(u, a), ev, wait, lk: k, lane: true }), iN = HAB_R - 1.9, iM = HAB_R + 0.9;
       this.nodes = [...(this.eva ? [P(iM, 'ind', 2)] : []), P(iM, 'c:o', 0.6), P(iM, 'o:i', 1.0), P(iN, 'c:i!', 0.3), { x: s.x, z: s.z }];
     } else { this.dropLock(); this.nodes = this.route(s); }
   }
@@ -407,7 +407,9 @@ export class Bot {
   }
   private lock(k: number, out: boolean): Node[] {
     const a = k * PI, P = (u: number, ev?: string, wait?: number): Node => ({ ...pol(u, a), ev: ev ? `${ev}` : undefined, wait, lk: k, lane: true });
-    const iN = HAB_R - 1.4, iM = HAB_R + 0.9, oM = HAB_R + TL - 0.9, oX = HAB_R + TL + 1.9;
+    // iN/oX stand clear of both hatch swings: the hatches open out of the lock, so the inner one sweeps
+    // about 1.7 m into the hab and the outer one the same distance onto the surface
+    const iN = HAB_R - 1.9, iM = HAB_R + 0.9, oM = HAB_R + TL - 0.9, oX = HAB_R + TL + 1.9;
     return out ? [P(iN - 1.2, 'acq'), P(iN, 'o:i', 1.1), P(iM, 'c:i', 1.0), P(iM, 'eva', 9), P(iM, 'o:o', 1.1), P(oX, 'c:o!', 0.4)]
       : [P(oX + 1.4, 'acq'), P(oX, 'o:o', 1.1), P(oM, 'c:o', 1.0), P(oM, 'ind', 8), P(oM, 'o:i', 1.1), P(iN, 'c:i!', 0.4)];
   }
