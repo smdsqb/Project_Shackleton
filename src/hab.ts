@@ -332,6 +332,13 @@ export class Hab {
       const mc = medicalCabinet(), mcH = mc.doors.map((d) => this.hs(d)), MT = -0.382 * P, MR = R - 0.22; place(MT, MR, mc.g, 'MEDICAL', 2.0, 0.7);
       this.reg(MT, MR, -0.7, 0, 1.6, () => `[E] ${mcH[0].want ? 'CLOSE' : 'OPEN'} MEDICAL CABINET`, () => (toggle(mcH) ? 'MEDICAL CABINET OPEN' : 'MEDICAL CABINET CLOSED'),
         { text: () => '[F] CHECK CREW VITALS', run: () => { if (!mcH[0].want) return 'OPEN THE CABINET FIRST'; this.startAction('VITALS CHECK · PULSE, SPO2, TEMPERATURE', 5, () => `CREW VITALS NOMINAL · CUMULATIVE DOSE ${(sim()?.doseMsv ?? 0).toFixed(2)} mSv`); return ''; } });
+      // stocked supplies behind the doors: trauma kit, AED, medical oxygen, medications, and a restock point for the first-aid kit
+      const mcOpen = () => (mcH[0].want ? '' : 'OPEN THE CABINET FIRST');
+      this.reg(MT, MR, -0.7, 0.12, 1.3, () => '[E] INSPECT TRAUMA KIT', () => { const e = mcOpen(); if (e) return e; return 'TRAUMA KIT · 2 TOURNIQUETS, SAM SPLINTS, BURN DRESSINGS, HEMOSTATIC GAUZE, CERVICAL COLLAR'; });
+      this.reg(MT, MR, -0.7, 0.30, 1.3, () => '[E] CHECK AED', () => { const e = mcOpen(); if (e) return e; return 'AED SELF-TEST PASS · PADS SEALED · BATTERY 98 %'; });
+      this.reg(MT, MR, -0.7, -0.30, 1.3, () => '[E] INSPECT MEDICAL O2 BOTTLE', () => { const e = mcOpen(); if (e) return e; return 'MEDICAL O2 · 2.0 L CYLINDER @ 137 BAR · REGULATOR AND MASK LINE OK'; });
+      this.reg(MT, MR, -0.7, -0.18, 1.3, () => '[E] INVENTORY MEDICATIONS', () => { const e = mcOpen(); if (e) return e; return 'MEDS STOCK NOMINAL · ANALGESICS, ANTIBIOTICS, ANTI-NAUSEA, ELECTROLYTE PACKS, ANTI-RADIATION KIT'; });
+      this.reg(MT, MR, -0.7, 0.04, 1.3, () => `[E] RESTOCK FIRST-AID KIT (${this.kitStock} / 20)`, () => { const e = mcOpen(); if (e) return e; if (this.kitStock >= 20) return 'FIRST-AID KIT ALREADY FULL'; this.startAction('RESTOCKING · DRESSINGS, GAUZE, ANTISEPTIC', 4, () => { this.kitStock = 20; return 'FIRST-AID KIT RESTOCKED · 20 / 20'; }); return ''; });
       // hygiene compartment: closed cabin with a door, waste collector, shower, basin; its collision and light are set up here
       const ws = washroom(), wsH = this.hs(ws.door), HT = 0.9 * P; place(HT, 6.5, ws.g);
       { const l = label('HYGIENE', 0.6); const [lx, lz] = this.wp(HT, 6.5, -1.235, 0); l.position.set(lx, 2.1, lz); l.rotation.y = -HT - P / 2; this.root.add(l); }
