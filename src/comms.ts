@@ -4,6 +4,8 @@ export type Link = { up: boolean; reason: string };
 export type CommsHost = {
   telemetry(): Record<string, unknown>; link(): Link; now(): Date; delayS(): number;
   onClose(): void; onPad(open: boolean, lines: string[], live: boolean): void;
+  /** the pad's MIC button: record a spoken message for Houston */
+  mic?: () => void;
   /** Present when the outpost has a rover: its telemetry, its UHF link to the Hab, and whether anybody is aboard. */
   rover?: { telemetry(): unknown; link(): { up: boolean; dist: number; reason: string }; occupied(): boolean };
 };
@@ -63,7 +65,7 @@ const CSS = `
 .fm{display:flex;gap:8px;padding:10px 14px;border-top:1px solid rgba(79,216,255,.2)}.fm span{color:#4fd8ff}
 .fm input{flex:1;background:transparent;border:0;outline:0;color:#e9edf1;font:inherit;font-size:13px}
 #pad{left:16px;bottom:16px;width:min(390px,92vw);background:rgba(4,12,18,.86);border:1px solid rgba(79,216,255,.45);border-radius:6px;flex-direction:column;backdrop-filter:blur(3px)}
-#pad.on{display:flex}#pad.emerg{border-color:#ff4d4d}#pad .lg{max-height:190px;min-height:96px;font-size:12px;padding:8px 12px}`;
+#pad.on{display:flex}.micb{background:transparent;border:1px solid rgba(79,216,255,.45);color:#4fd8ff;font:inherit;font-size:10px;letter-spacing:.12em;padding:2px 8px;cursor:pointer;border-radius:3px}.micb:hover{background:rgba(79,216,255,.12)}#pad.emerg{border-color:#ff4d4d}#pad .lg{max-height:190px;min-height:96px;font-size:12px;padding:8px 12px}`;
 
 export class Comms {
   isOpen = false; padOpen = false;
@@ -78,7 +80,7 @@ export class Comms {
     this.term = document.createElement('div'); this.term.id = 'term';
     this.term.innerHTML = `<div class="box"><div class="hd"><span id="thead">HAB COMMS DESK · HOUSTON</span><span class="chip" id="tchip">STANDBY</span></div><div class="lg" id="tlog"></div><div class="hint">TEXT ONLY · ENTER SEND · TAB CLOSE</div><form class="fm" autocomplete="off"><span>&gt;</span><input id="tin" maxlength="200" spellcheck="false" placeholder="message to Houston"/></form></div>`;
     this.pad = document.createElement('div'); this.pad.id = 'pad';
-    this.pad.innerHTML = `<div class="hd"><span>SUIT COMMS PAD</span><span class="chip" id="pchip">STANDBY</span></div><div class="lg" id="plog"></div><form class="fm" autocomplete="off"><span>&gt;</span><input id="pin" maxlength="200" spellcheck="false" placeholder="talk to Houston" disabled/></form><div class="hint">ENTER SEND · TAB CLOSE</div>`;
+    this.pad.innerHTML = `<div class="hd"><span>SUIT COMMS PAD</span><span class="chip" id="pchip">STANDBY</span></div><div class="lg" id="plog"></div><form class="fm" autocomplete="off"><span>&gt;</span><input id="pin" maxlength="200" spellcheck="false" placeholder="talk to Houston" disabled/><button type="button" id="pmic" class="micb" title="talk to Houston by voice (B)">MIC</button></form><div class="hint">ENTER SEND · B OR MIC TO SPEAK · TAB CLOSE</div>`;
     document.body.append(this.term, this.pad);
     this.log = this.term.querySelector('#tlog')!; this.inp = this.term.querySelector('#tin')!; this.chip = this.term.querySelector('#tchip')!; this.head = this.term.querySelector('#thead')!;
     this.plog = this.pad.querySelector('#plog')!; this.pin = this.pad.querySelector('#pin')!; this.pchip = this.pad.querySelector('#pchip')!;
@@ -91,6 +93,7 @@ export class Comms {
     });
     this.pin.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Tab') { e.preventDefault(); this.closePad(); } });
     this.pin.addEventListener('keyup', (e) => e.stopPropagation());
+    this.pad.querySelector('#pmic')!.addEventListener('click', () => { if (this.ready && !this.busy) this.host.mic?.(); });
   }
 
   private async ask(text: string, channel: Channel = 'houston'): Promise<Reply> {
@@ -153,6 +156,15 @@ export class Comms {
   }
 
   // ---------- suit pad: key press, static, female link manager, then voice chat with Houston ----------
+  /** open the suit pad if needed; resolves true once the link is up and Houston has finished the hail (false if there is no link or the desk is open) */
+  async ensureReady(): Promise<boolean> {
+    if (this.isOpen) return false;
+    if (!this.padOpen) this.openPad();
+    for (let i = 0; i < 160 && this.padOpen && !this.ready; i++) await sleep(250);
+    return this.padOpen && this.ready && !this.busy;
+  }
+  /** a spoken message for Houston (already transcribed): same path as typing it, so Houston answers by voice as usual */
+  async voiceSend(text: string) { if (this.isOpen) { await this.deskSend(text); return; } if (!(await this.ensureReady())) return; await this.padSend(text); }
   async togglePad() { if (this.isOpen) return; if (this.padOpen) this.closePad(); else this.openPad(); }
   private openPad() {
     this.padOpen = true; const s = ++this.session; this.ready = false; this.busy = false; this.plog.textContent = ''; this.pad.classList.add('on'); this.pad.classList.remove('emerg'); this.pin.disabled = true;

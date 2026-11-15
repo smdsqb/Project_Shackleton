@@ -1,17 +1,30 @@
-// Talking to the crew. Press V to open the mic (it stops when you stop talking, or press V again to send, Esc cancels);
-// press T to type instead. The nearest awake crew member (or whoever you name) turns to you, answers in their own voice, and
-// then does what you asked or goes back to their task.
-//   mic -> /api/stt (Groq Whisper, ElevenLabs Scribe as backup) -> /api/crew (Groq writes the reply and picks an action)
+// Talking to the crew (and Houston). Press V to open the mic (it stops when you stop talking, or press V again to send,
+// Esc cancels); press B to radio Houston by voice; press T to type. The nearest awake crew member (or whoever you name, or
+// everybody) turns to you, answers in their own voice, and does what you asked, including the game's real repair jobs.
+// The crew also talk to each other, crack jokes, start conversations with you, and after a question your mic opens by itself.
+//   mic -> /api/stt (Groq Whisper, ElevenLabs Scribe as backup) -> /api/crew (Groq: line + action, with live base status)
 //   -> /api/tts (ElevenLabs, a distinct voice per person) -> played from the speaker's position in 3D, mouth driven by the audio.
-// Every reply is also shown as a caption, and voice replies can be switched off in the text panel.
+//   Houston: the same mic -> /api/stt, then the comms pad sends it and Houston answers over the radio voice as before.
 import * as THREE from 'three';
 import { isBroadcast } from './crew';
 import type { Crew, Bot, CrewAction } from './crew';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+const pick = <T,>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
 type Turn = { role: 'me' | 'you'; text: string };
-type Reply = { say: string; do: CrewAction };
+type Reply = { say: string; do: CrewAction; ask?: boolean };
+type Job = { id: string; ok: boolean; why?: string };
+/** what the game gives the crew voice layer: live base state, the repair-job interface and idle checks */
+export type CrewHost = {
+  houston?: (text: string) => Promise<void>;
+  world: () => string;
+  jobs: () => Job[];
+  startJob: (id: string) => string;     // '' when started, else the reason it can't be
+  lastLog: () => string;
+  canChat: () => boolean;               // false while a menu/terminal is open or the sim is paused
+};
 
 const CSS = `#chint{position:fixed;bottom:12px;right:16px;font-size:10px;letter-spacing:.18em;color:#7d8a99;pointer-events:none;z-index:5}#chint b{color:#4fd8ff;font-weight:600}
 #cstat{position:fixed;left:50%;bottom:11%;transform:translateX(-50%);display:none;padding:6px 16px;font-size:11px;letter-spacing:.2em;color:#4fd8ff;background:rgba(5,7,10,.78);border:1px solid rgba(79,216,255,.45);border-radius:3px;z-index:6;pointer-events:none;white-space:nowrap}
@@ -22,13 +35,29 @@ const CSS = `#chint{position:fixed;bottom:12px;right:16px;font-size:10px;letter-
 #cbox .hd{display:flex;justify-content:space-between;align-items:center;padding:7px 12px;font-size:11px;letter-spacing:.18em;color:#ffb000;border-bottom:1px solid rgba(79,216,255,.2)}
 #cbox label{font-size:10px;letter-spacing:.12em;color:#7d8a99;cursor:pointer;user-select:none}#cbox label input{margin-right:5px;vertical-align:-2px}
 #cbox form{display:flex;gap:8px;padding:9px 12px;align-items:center}#cbox form span{color:#4fd8ff}#cbox input[type=text]{flex:1;background:transparent;border:0;outline:0;color:#e9edf1;font:inherit;font-size:13px}
-#cbox button{background:transparent;border:1px solid rgba(79,216,255,.45);color:#4fd8ff;font:inherit;font-size:11px;padding:3px 9px;cursor:pointer;border-radius:3px}#cbox .tip{padding:0 12px 8px;font-size:10px;letter-spacing:.1em;color:#566}`;
+#cbox button{background:transparent;border:1px solid rgba(79,216,255,.45);color:#4fd8ff;font:inherit;font-size:11px;padding:3px 9px;cursor:pointer;border-radius:3px}#cbox .opts{display:flex;flex-wrap:wrap;gap:6px 14px;padding:6px 12px;border-bottom:1px solid rgba(79,216,255,.12)}#cbox .tip{padding:0 12px 8px;font-size:10px;letter-spacing:.1em;color:#566}`;
 
-const pick = <T,>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
+const JOB_NAMES: Record<string, string> = { patch: 'patching the hull leak', sealant: 'sealing the leak from inside', clean: 'brushing the dust off the array', busfix: 'repairing the array power string', antenna: 're-pointing the antenna', bed: 'swapping the scrubber bed', stack: 'swapping the oxygenator stack', coolant: 'swapping the coolant pump', waterline: 'repairing the water line', extinguish: 'fighting the fire', isolate: 'isolating the battery pack', medic: 'treating the injured crew member', inspect: 'inspecting the hull and equipment', berm: 'piling regolith over the hab' };
 const ATTENTION = /\b(listen|attention|gather|huddle|assemble|hear me|over here|come (here|over|to me)|get (over )?here|to me)\b/i;
-/** a plain-language reading of what the Commander asked for; used when the language model returns no action, so an order is never lost */
+const HOUSTON = /^\s*(?:(?:hey|hi|hello|ok|okay|yo)[ ,]+)?(?:houston|mission control|capcom|ground control|flight director)\b|\b(?:radio|call|contact|tell|ask|message|hail|get me|patch me (?:in )?to|connect me to)\s+(?:houston|mission control|capcom|ground control|the flight director)\b|\bthis is shackleton\b/i;
+/** does it sound like an instruction rather than chat? (imperative verb, "can you...", "please...", "I need you to...") */
+export const isOrder = (text: string) => /^(?:(?:ok|okay|hey|hi|yo|please|alright|right|now|so)[ ,]+)*(?:\w+,?\s+)?(?:go|come|get|take|do|fix|patch|plug|seal|clean|check|grab|bring|put|swap|repair|start|stop|wait|follow|help|inspect|treat|dust|brush|handle|deal|make|run|hurry|move|head|walk|suit|extinguish|isolate|re-?point|pile|sweep|tend|look|find|call|tell|ask|show|stay|hold|freeze|jump|dance|wave|salute|let'?s)\b|\b(?:can|could|would|will) you\b|\bplease\b|\bneed you to\b|\bi want you to\b|\bgo ahead\b|\bhave to\b|\bgotta\b|\bneed (?:someone|somebody|everyone|you)\b/i.test(text.trim());
+/** a plain-language reading of what the Commander asked for; backs up the language model so an order is never dropped */
 export function parseIntent(text: string): CrewAction | null {
-  const t = text.toLowerCase(), T = (re: RegExp) => re.test(t);
+  const t = text.toLowerCase(), T = (re: RegExp) => re.test(t), J = (job: string): CrewAction => ({ type: 'job', job });
+  if (T(/\b(patch|plug|seal|fix|repair|close|stop|cover|stem)\b.*\b(breach|leak|hole|crack|hull|puncture)\b|\b(breach|leak|hole|crack|puncture)\b.*\b(patch|plug|seal|fix|repair)\b/)) return J(T(/\b(inside|from inside|sealant|foam)\b/) ? 'sealant' : 'patch');
+  if (T(/\b(clean|brush|sweep|wipe|dust off)\b.*\b(array|panels?|solar)\b|\b(array|panels?|solar)\b.*\b(dust|clean|brush)\b/)) return J('clean');
+  if (T(/\b(fix|repair|restore|sort out)\b.*\b(solar|array|panels?|power string|string)\b|\b(solar|array|panels?)\b.*\b(fix|repair|broken|damaged)\b/)) return J('busfix');
+  if (T(/\b(put out|extinguish|fight|deal with|handle|stop)\b.*\b(fire|flames?|blaze)\b|\bfire\b/)) return J('extinguish');
+  if (T(/\bbatter(y|ies)\b/) && T(/\b(overheat|hot|runaway|isolate|disconnect|swap out|smoking)\b/)) return J('isolate');
+  if (T(/\bcoolant\b|\bcooling pump\b|\bcoolant pump\b/)) return J('coolant');
+  if (T(/\bwater\b/) && T(/\b(leak|line|pipe)\b/)) return J('waterline');
+  if (T(/\b(treat|heal|bandage|patch up|check on|help)\b.*\b(injured|hurt|wound|casualty)\b|\bmedic\b|\bfirst aid\b|\binjured\b/)) return J('medic');
+  if (T(/\b(scrubber|co2|lioh)\b/) && T(/\b(swap|change|replace|bed|fix)\b/)) return J('bed');
+  if (T(/\b(oxygenator|o2 generator|oxygen stack)\b/) && T(/\b(swap|change|replace|stack|fix)\b/)) return J('stack');
+  if (T(/\b(antenna|gimbal|dish)\b/) && T(/\b(point|aim|fix|free|repair|stuck|unstick|align)\b/)) return J('antenna');
+  if (T(/\binspect (the )?(hull|equipment|base|habitat|everything)\b|\bcheck (the )?hull\b|\bhull (check|inspection)\b/)) return J('inspect');
+  if (T(/\b(pile|cover|bury|berm|heap|shovel)\b.*\b(regolith|soil|hab|habitat)\b|\bberm\b/)) return J('berm');
   if (T(/\b(follow me|come with me|come along|tag along|stick with me|walk with me)\b/)) return { type: 'follow' };
   if (T(/\b(dance|boogie)\b/)) return { type: 'emote', emote: 'dance' };
   if (T(/\b(jump|hop|bounce)\b/)) return { type: 'emote', emote: 'jump' };
@@ -38,7 +67,6 @@ export function parseIntent(text: string): CrewAction | null {
   if (T(/\bfacepalm\b/)) return { type: 'emote', emote: 'facepalm' };
   if (T(/\b(wave|say hi|say hello|give me a wave)\b/)) return { type: 'emote', emote: 'wave' };
   if (T(/\b(samples?|rocks?|regolith|collect|geology)\b/)) return { type: 'task', task: 'sample' };
-  if (T(/\b(dust|clean|brush|sweep)\b.*\b(panels?|array|solar)\b|\b(panels?|solar|array)\b.*\b(dust|clean|brush)\b/)) return { type: 'task', task: 'dust' };
   if (T(/\binspect|\bcheck (the )?(batter(y|ies)|tanks?|radiator|equipment|gear|outside)/)) return { type: 'task', task: 'inspect' };
   if (T(/\b(moonwalk|walk outside|go outside|go out|step outside|suit up|eva|surface)\b/)) return { type: 'task', task: 'moonwalk' };
   if (T(/\bstar ?gaz|\b(look|watch|see|check) (at )?the (stars|sky|earth)\b/)) return { type: 'task', task: 'stargaze' };
@@ -47,7 +75,7 @@ export function parseIntent(text: string): CrewAction | null {
   if (T(/\b(stretch|exercise|workout|work out)\b/)) return { type: 'task', task: 'stretch' };
   if (T(/\b(coffee|snack|tea|drink|food|eat|hungry)\b/)) return { type: 'task', task: 'coffee' };
   if (T(/\bradio check\b/)) return { type: 'task', task: 'radio' };
-  if (T(/\b(software|update|upgrade|patch)\b/)) return { type: 'task', task: 'update' };
+  if (T(/\b(software|update|upgrade)\b/)) return { type: 'task', task: 'update' };
   if (T(/\b(racks?|life support|oxygen|scrubber|water reclaimer|regulator)\b/)) return { type: 'task', task: 'rack' };
   if (T(/\b(lab|experiment|microscope)\b/)) return { type: 'task', task: 'lab' };
   if (T(/\b(window|porthole)\b/)) return { type: 'goto', place: 'window' };
@@ -63,41 +91,47 @@ export function parseIntent(text: string): CrewAction | null {
 const ACK: Record<string, string[]> = {
   come: ['On my way, Commander.', 'Coming right now.', 'Be right there.'], follow: ['Right behind you.', 'Lead the way, Commander.'], stop: ['Holding right here.', 'Not moving a muscle.'],
   goto: ['Heading there now.', 'On it, moving.', 'Going, Commander.'], task: ['On it, doing it now.', 'Consider it started.', 'Yes, Commander, starting now.'], emote: ['Ha, you got it.', 'Sure thing!'],
+  job: ['On it, starting the repair now.', 'Suiting up, consider it handled.', 'Already moving, Commander.'],
 };
 const localReply = (text: string, bot: Bot): Reply => {
   const a = parseIntent(text), f = bot.spec.first;
-  if (a) return { say: pick(ACK[a.type] ?? ACK.goto), do: a };
+  if (a && (isOrder(text) || a.type === 'emote' || a.type === 'job')) return { say: pick(ACK[a.type] ?? ACK.goto), do: a };
   if (/\b(hi|hello|hey|morning|evening|afternoon|yo)\b/i.test(text)) return { say: `Hey Commander, ${f} here.`, do: { type: 'emote', emote: 'wave' } };
   return { say: pick(['Copy that, Commander.', 'Yep, got you.', 'Sure thing.']), do: { type: 'none' } };
 };
-const BUMP_LINES = ['Whoa, easy there, Commander!', 'Ow! Watch the shoulder, boss.', 'Heh, personal space, Commander.', 'Careful, I bruise like a peach.', 'Hey! Eyes up, Commander.', 'Oof. Did we just collide?'];
 const localGreeting = (hour: number, bot: Bot): Reply => {
   const part = hour >= 5 && hour < 12 ? 'Morning' : hour >= 12 && hour < 17 ? 'Afternoon' : hour >= 17 && hour < 21 ? 'Evening' : 'Late night';
   return { say: part === 'Late night' ? `Burning the midnight oil, Commander? Same here.` : `${part}, Commander. ${bot.spec.first} reporting in.`, do: { type: 'emote', emote: 'wave' } };
 };
+const BUMP_LINES = ['Whoa, easy there, Commander!', 'Ow! Watch the shoulder, boss.', 'Heh, personal space, Commander.', 'Careful, I bruise like a peach.', 'Hey! Eyes up, Commander.', 'Oof. Did we just collide?'];
 
 export class CrewTalk {
-  lastBump = 0; voiceReplies = true; recording = false; busy = false; greeted = false;
+  lastBump = 0; voiceReplies = true; ambient = true; handsFree = true; recording = false; busy = false; greeted = false;
   private ctx: AudioContext | null = null; private stop: ((send: boolean) => void) | null = null;
-  private cur: { an: AnalyserNode; data: Uint8Array<ArrayBuffer>; bot: Bot; pan: PannerNode | null } | null = null;
-  private hist = new Map<string, Turn[]>(); private statusEl: HTMLElement; private subEl: HTMLElement; private box: HTMLElement; private inp: HTMLInputElement; private vchk: HTMLInputElement;
+  private cur: { an: AnalyserNode; data: Uint8Array<ArrayBuffer>; bot: Bot; pan: PannerNode | null; src: AudioBufferSourceNode } | null = null;
+  private hist = new Map<string, Turn[]>(); private statusEl: HTMLElement; private subEl: HTMLElement; private box: HTMLElement; private inp: HTMLInputElement;
   private statusT = 0; private fwd = new THREE.Vector3(); private tmp = new THREE.Vector3();
+  private sceneT = 1e9; private sceneBusy = false; private sceneAbort = false; private recent: string[] = []; private lastInitiate = 0; private lastPair = ''; private jobAnn = new Map<string, number>();
+  private micMode: { target: 'crew' | 'houston'; auto: boolean; force?: Bot } = { target: 'crew', auto: false };
 
-  constructor(private crew: Crew, private camera: THREE.PerspectiveCamera) {
+  constructor(private crew: Crew, private camera: THREE.PerspectiveCamera, private host: CrewHost) {
     const st = document.createElement('style'); st.textContent = CSS; document.head.append(st);
     const mk = (tag: string, id: string, html = '') => { const e = document.createElement(tag); e.id = id; e.innerHTML = html; document.body.append(e); return e; };
-    mk('div', 'chint', '<b>V</b> TALK TO CREW &nbsp;·&nbsp; <b>T</b> TYPE');
+    mk('div', 'chint', '<b>V</b> TALK TO CREW &nbsp;·&nbsp; <b>B</b> RADIO HOUSTON &nbsp;·&nbsp; <b>T</b> TYPE');
     this.statusEl = mk('div', 'cstat'); this.subEl = mk('div', 'csub');
     this.box = mk('div', 'cbox', `<div class="hd"><span>CREW CHANNEL</span><label><input type="checkbox" id="cvoice" checked>VOICE REPLIES</label></div>
+      <div class="opts"><label><input type="checkbox" id="camb" checked>AMBIENT CHATTER</label><label><input type="checkbox" id="chf" checked>HANDS-FREE REPLIES</label></div>
       <form autocomplete="off"><span>&gt;</span><input type="text" id="cin" maxlength="240" placeholder="say something to the crew…"><button type="button" id="cmic">MIC</button></form>
-      <div class="tip">NEAREST CREW MEMBER ANSWERS · SAY A NAME TO PICK ONE · ENTER SENDS · ESC CLOSES</div>`);
-    this.inp = this.box.querySelector('#cin')!; this.vchk = this.box.querySelector('#cvoice')!;
-    this.vchk.addEventListener('change', () => { this.voiceReplies = this.vchk.checked; });
+      <div class="tip">NEAREST CREW MEMBER ANSWERS · SAY A NAME TO PICK ONE · SAY EVERYONE FOR ALL · SAY HOUSTON FOR THE RADIO · ESC CLOSES</div>`);
+    this.inp = this.box.querySelector('#cin')!;
+    const bind = (id: string, set: (v: boolean) => void) => this.box.querySelector<HTMLInputElement>(id)!.addEventListener('change', (e) => set((e.target as HTMLInputElement).checked));
+    bind('#cvoice', (v) => { this.voiceReplies = v; }); bind('#camb', (v) => { this.ambient = v; }); bind('#chf', (v) => { this.handsFree = v; });
     this.box.querySelector('#cmic')!.addEventListener('click', () => { this.closeText(); void this.toggleMic(); });
     this.box.querySelector('form')!.addEventListener('submit', (e) => { e.preventDefault(); const v = this.inp.value.trim(); this.inp.value = ''; this.closeText(); if (v) void this.converse(v); });
     this.inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); this.closeText(); } });
     this.inp.addEventListener('keyup', (e) => e.stopPropagation());
     this.crew.onBump = (b, k) => this.onBump(b, k);
+    this.crew.onJobDone = (b, id) => this.jobDone(b, id);
   }
 
   // ------------------------------------------------------------ UI helpers
@@ -110,7 +144,7 @@ export class CrewTalk {
     this.subEl.append(d); while (this.subEl.children.length > 3) this.subEl.firstChild?.remove(); setTimeout(() => d.remove(), 3500 + text.length * 70);
   }
   get textOpen() { return this.box.classList.contains('on'); }
-  openText() { document.getElementById('chint')!.style.display = 'none'; this.box.classList.add('on'); this.vchk.checked = this.voiceReplies; this.inp.focus(); }
+  openText() { document.getElementById('chint')!.style.display = 'none'; this.box.classList.add('on'); this.inp.focus(); }
   closeText() { document.getElementById('chint')!.style.display = ''; this.box.classList.remove('on'); this.inp.blur(); }
 
   // ------------------------------------------------------------ audio plumbing
@@ -124,7 +158,8 @@ export class CrewTalk {
     g.gain.exponentialRampToValueAtTime(0.03, t + 0.01); g.gain.setValueAtTime(0.03, t + 0.18); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22); o.start(t); o.stop(t + 0.23);
   }
   /** call every frame: keeps the 3D listener on the camera, the voice on the speaker's head, and the speaker's mouth moving with the audio */
-  update() {
+  update(dt = 1 / 60) {
+    this.tickScene(dt);
     const c = this.ctx; if (!c) return; const L = c.listener, p = this.camera.position; this.camera.getWorldDirection(this.fwd);
     if (L.positionX) { L.positionX.value = p.x; L.positionY.value = p.y; L.positionZ.value = p.z; L.forwardX.value = this.fwd.x; L.forwardY.value = this.fwd.y; L.forwardZ.value = this.fwd.z; L.upX.value = 0; L.upY.value = 1; L.upZ.value = 0; }
     else L.setPosition(p.x, p.y, p.z);
@@ -147,7 +182,7 @@ export class CrewTalk {
       if (radio) { const hp = c.createBiquadFilter(), lp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 320; lp.type = 'lowpass'; lp.frequency.value = 3300; node.connect(hp); hp.connect(lp); node = lp; this.blip(2525); }
       else { pan = c.createPanner(); pan.panningModel = 'HRTF'; pan.distanceModel = 'inverse'; pan.refDistance = 1.6; pan.rolloffFactor = 1.1; pan.maxDistance = 80; node.connect(pan); node = pan; }
       node.connect(g); g.connect(c.destination);
-      this.cur = { an, data: new Uint8Array(an.fftSize), bot, pan };
+      this.cur = { an, data: new Uint8Array(an.fftSize), bot, pan, src };
       src.onended = () => { this.cur = null; bot.lip = 0; if (radio) this.blip(2475); res(); }; src.start();
     });
   }
@@ -170,13 +205,16 @@ export class CrewTalk {
   }
   private async ask(body: Record<string, unknown>, fallback: Reply, ms = 14000): Promise<Reply> {
     try {
-      const r = await fetch('/api/crew', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(ms), body: JSON.stringify(body) });
+      const r = await fetch('/api/crew', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(ms), body: JSON.stringify({ world: this.host.world(), jobs: this.host.jobs(), alert: this.crew.alert, ...this.clock(), ...body }) });
       if (!r.ok) throw new Error('crew ' + r.status);
-      const j = (await r.json()) as { say?: string; do?: CrewAction };
-      if (!j.say) throw new Error('empty'); return { say: j.say, do: j.do ?? { type: 'none' } };
+      const j = (await r.json()) as { say?: string; do?: CrewAction; ask?: boolean };
+      if (!j.say) throw new Error('empty'); return { say: j.say, do: j.do ?? { type: 'none' }, ask: j.ask };
     } catch { return fallback; }
   }
   private radioTo(bot: Bot) { const p = this.camera.position; return Math.hypot(p.x - bot.x, p.z - bot.z) > 15 || this.crew.playerOutside(p) !== bot.eva; }
+  private turns(bot: Bot) { return this.hist.get(bot.spec.name) ?? []; }
+  private remember(bot: Bot, ...t: Turn[]) { this.hist.set(bot.spec.name, [...this.turns(bot), ...t].slice(-14)); }
+  private clock() { const d = new Date(); return { hour: d.getHours(), clock: `${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}, ${d.toLocaleDateString([], { weekday: 'long' })}` }; }
   /** caption + voice. stand=true makes the speaker stop and face the Commander while talking; with an order they keep moving and talk on the go. */
   private async speak(bot: Bot, text: string, radio: boolean, stand = true, pre?: Promise<AudioBuffer | null>, quiet = false) {
     this.line(`${bot.spec.first} ${bot.spec.name}`.toUpperCase(), text);
@@ -186,49 +224,73 @@ export class CrewTalk {
     if (buf) await this.play(buf, bot, radio); else if (this.voiceReplies && !quiet) await this.browserSpeak(text, bot); else await sleep(Math.min(5000, 900 + text.length * 55));
     bot.lip = 0; if (stand && bot.convo === 'speak') bot.convo = null;
   }
-  private clock() { const d = new Date(); return { hour: d.getHours(), clock: `${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}, ${d.toLocaleDateString([], { weekday: 'long' })}` }; }
+  private endScene() { if (this.sceneBusy) { this.sceneAbort = true; try { this.cur?.src.stop(); } catch { /* already stopped */ } } }
 
-  async converse(text: string) {
-    if (this.busy) return; this.busy = true;
+  /** carry the order out in the game: crew movement and, for repair work, the real sim job */
+  private execute(bot: Bot, act: CrewAction): { act: CrewAction; note?: string } {
+    const p = this.camera.position;
+    if (act.type === 'job' && act.job) {
+      let id = act.job; const jobs = this.host.jobs(), ok = (i: string) => !!jobs.find((j) => j.id === i)?.ok;
+      if (!ok(id)) { const alt = id === 'busfix' && ok('clean') ? 'clean' : id === 'clean' && ok('busfix') ? 'busfix' : id === 'patch' && ok('sealant') ? 'sealant' : id === 'sealant' && ok('patch') ? 'patch' : ''; if (alt) id = alt; }
+      if (!this.crew.canObey({ type: 'job', job: id })) { bot.perform({ type: 'emote', emote: 'shrug' }, p); return { act: { type: 'none' }, note: 'ALERT ACTIVE: NOBODY GOES OUTSIDE UNTIL IT CLEARS' }; }
+      const why = this.host.startJob(id);
+      if (why) { bot.perform({ type: 'emote', emote: 'shrug' }, p); return { act: { type: 'none' }, note: why }; }
+      this.crew.assignJob(bot, id, p); return { act: { type: 'job', job: id } };
+    }
+    if (act.type !== 'none') {
+      if (!this.crew.canObey(act)) { bot.perform({ type: 'emote', emote: 'shrug' }, p); return { act: { type: 'none' }, note: 'ALERT ACTIVE: NOBODY GOES OUTSIDE UNTIL IT CLEARS' }; }
+      if (act.type !== 'emote') bot.convo = null; bot.perform(act, p);
+    }
+    return { act };
+  }
+
+  async converse(text: string, force?: Bot) {
+    if (this.busy) return; this.endScene(); this.busy = true; let followUp: Bot | null = null;
     try {
+      if (!force && HOUSTON.test(text) && this.host.houston) { this.line('YOU → HOUSTON', text, true); await this.host.houston(text); return; }
       if (isBroadcast(text)) { await this.broadcast(text); return; }
-      const t = this.target(text); if (!t) { this.status('NOBODY IS AROUND TO HEAR YOU', 2500); return; }
-      const bot = t.bot, p = this.camera.position, radio = this.radioTo(bot);
+      const t = force && force.sleepStage < 2 ? { bot: force, d: 0 } : this.target(text); if (!t) { this.status('NOBODY IS AROUND TO HEAR YOU', 2500); return; }
+      const bot = t.bot, radio = this.radioTo(bot);
       this.line('YOU', text, true);
       if (bot.sleepStage < 2) bot.convo = 'think';
       this.status(`${bot.spec.first.toUpperCase()} IS THINKING…`);
-      const h = this.hist.get(bot.spec.name) ?? []; const ck = this.clock();
-      const res = await this.ask({ who: bot.spec.name, kind: 'chat', text, ctx: bot.ctx(), history: h.map((x) => ({ role: x.role === 'me' ? 'me' : 'you', text: x.text })), radio, alert: this.crew.alert, ...ck }, localReply(text, bot));
-      let act = res.do; const intent = parseIntent(text); if (act.type === 'none' && intent && intent.type !== 'stop') act = intent;   // an order is never dropped
-      h.push({ role: 'me', text }, { role: 'you', text: res.say }); this.hist.set(bot.spec.name, h.slice(-12));
+      const res = await this.ask({ who: bot.spec.name, kind: 'chat', text, ctx: bot.ctx(), history: this.turns(bot), radio }, localReply(text, bot));
+      let act = res.do;
+      if (act.type === 'none' && isOrder(text)) { const i = parseIntent(text); if (i) act = i; }   // an order is never dropped
+      this.remember(bot, { role: 'me', text }, { role: 'you', text: res.say });
       this.status('');
       // do it NOW and talk while doing it: movement orders start this instant, the voice line plays as they go
-      const moves = act.type !== 'none' && act.type !== 'emote';
-      if (act.type !== 'none') { if (moves) bot.convo = null; bot.perform(act, p); }
+      const { act: done, note } = this.execute(bot, act); if (note) this.line('BASE', note);
+      const moves = done.type !== 'none' && done.type !== 'emote';
       await this.speak(bot, res.say, radio, !moves);
+      // keep it going like real people: a question gets a hands-free answer window; otherwise another crew member may chime in
+      if (!moves) { if (res.ask || /\?\s*["”]?$/.test(res.say)) followUp = bot; else this.maybeChime(bot, text, res.say); }
     } finally { this.busy = false; for (const b of this.crew.bots) if (b.convo === 'think' || b.convo === 'listen') b.convo = null; this.status(''); }
+    if (followUp) void this.autoListen(followUp);
   }
 
   /** "everyone, listen up": the whole crew hears it, turns, obeys at once and answers in turn (nearest first) */
   private async broadcast(text: string) {
-    const p = this.camera.position, ck = this.clock();
+    const p = this.camera.position;
     const near = [...this.crew.bots].sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z));
     this.line('YOU', text, true); this.status('EVERYONE IS LISTENING…');
     for (const b of near) if (b.sleepStage < 2) b.convo = 'think';
-    const intent = parseIntent(text) ?? (ATTENTION.test(text) ? ({ type: 'come' } as CrewAction) : null);
+    const intent = (isOrder(text) || ATTENTION.test(text)) ? (parseIntent(text) ?? (ATTENTION.test(text) ? ({ type: 'come' } as CrewAction) : null)) : null;
     let replies: { who: string; say: string; do: CrewAction }[] = [];
     try {
-      const r = await fetch('/api/crew', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(14000), body: JSON.stringify({ who: 'ALL', text, crew: near.map((b) => { const c = b.ctx(); return { name: c.name, state: c.state, doing: c.doing }; }), alert: this.crew.alert, ...ck }) });
+      const r = await fetch('/api/crew', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(14000), body: JSON.stringify({ who: 'ALL', text, crew: near.map((b) => { const c = b.ctx(); return { name: c.name, state: c.state, doing: c.doing }; }), world: this.host.world(), jobs: this.host.jobs(), alert: this.crew.alert, ...this.clock() }) });
       if (r.ok) replies = ((await r.json()) as { replies?: typeof replies }).replies ?? [];
     } catch { replies = []; }
     this.status('');
     const lines = ['Right here, Commander.', 'Listening.', 'Yep, all ears.', 'Go ahead, Commander.'];
+    let jobTaken = false;
     const items = near.map((b, i) => {
       const r = replies.find((x) => x.who === b.spec.name); let act: CrewAction = r?.do ?? { type: 'none' }; if (act.type === 'none' && intent) act = intent;
+      if (act.type === 'job') { if (jobTaken) act = { type: 'none' }; else jobTaken = true; }   // one repair crew per job; the rest just acknowledge
       return { bot: b, say: r?.say || lines[i % 4], act, radio: this.radioTo(b) };
     });
     // everyone obeys at once...
-    for (const it of items) { if (it.act.type !== 'none' && !this.crew.alert) { if (it.act.type !== 'emote') it.bot.convo = null; it.bot.perform(it.act, p); } else if (it.bot.sleepStage < 2) it.bot.convo = 'listen'; }
+    for (const it of items) { const { act, note } = this.execute(it.bot, it.act); it.act = act; if (note) this.line('BASE', note); if (act.type === 'none' && it.bot.sleepStage < 2) it.bot.convo = 'listen'; }
     // ...then they answer one after another (audio is fetched in parallel so there is no dead air between voices)
     const pre = items.map((it) => (this.voiceReplies ? this.tts(it.say, it.bot).catch(() => null) : Promise.resolve(null)));
     for (let i = 0; i < items.length; i++) { const it = items[i], moves = it.act.type !== 'none' && it.act.type !== 'emote'; await this.speak(it.bot, it.say, it.radio, !moves, pre[i]); }
@@ -239,22 +301,97 @@ export class CrewTalk {
     const now = performance.now(); if (now - this.lastBump < 3500 || bot.sleepStage > 0) return; this.lastBump = now;
     void (async () => {
       const canned = pick(BUMP_LINES), loud = this.busy || !!this.cur;
-      const res = loud ? { say: canned, do: { type: 'none' } as CrewAction } : await this.ask({ who: bot.spec.name, kind: 'bump', strength, ctx: bot.ctx(), alert: this.crew.alert, ...this.clock() }, { say: canned, do: { type: 'none' } }, 5000);
-      if (!bot.convo) bot.convo = null; await this.speak(bot, res.say, false, true, undefined, loud);
+      const res = loud ? { say: canned, do: { type: 'none' } as CrewAction } : await this.ask({ who: bot.spec.name, kind: 'bump', strength, ctx: bot.ctx() }, { say: canned, do: { type: 'none' } }, 5000);
+      await this.speak(bot, res.say, false, true, undefined, loud);
+    })();
+  }
+
+  /** a repair finished (the sim says so): the lead reports back in their own voice */
+  private jobDone(bot: Bot, id: string) {
+    const now = performance.now(); if (now - (this.jobAnn.get(id) ?? 0) < 4000) return; this.jobAnn.set(id, now);
+    void (async () => {
+      const name = JOB_NAMES[id] ?? id, res = await this.ask({ who: bot.spec.name, kind: 'jobdone', job: name, outcome: this.host.lastLog(), ctx: bot.ctx() }, { say: `${name[0].toUpperCase() + name.slice(1)} is done, Commander.`, do: { type: 'none' } }, 7000);
+      for (let i = 0; i < 40 && (this.cur || this.recording); i++) await sleep(250);   // wait for a quiet moment
+      await this.speak(bot, res.say, this.radioTo(bot), false);
+    })();
+  }
+
+  /** after a one-liner another crew member may toss in a quip */
+  private maybeChime(bot: Bot, me: string, you: string) {
+    if (Math.random() > 0.25 || this.sceneBusy) return;
+    const others = this.crew.bots.filter((b) => b !== bot && b.sleepStage === 0 && !b.convo && b.lk === null && Math.hypot(b.x - bot.x, b.z - bot.z) < 14); if (!others.length) return;
+    const c = pick(others);
+    void (async () => {
+      const res = await this.ask({ who: c.spec.name, kind: 'chime', exchange: { me, you, by: bot.spec.first }, ctx: c.ctx() }, { say: pick(['I heard that. Carry on.', 'Ha! Note to self.']), do: { type: 'none' } }, 6000);
+      await sleep(500); if (this.busy || this.recording || this.cur) return;
+      c.chat = bot; await this.speak(c, res.say, this.radioTo(c), false); c.chat = null;
     })();
   }
 
   /** the nearest crew member says a one-line hello that fits the time of day where the player is */
   async greet() {
     if (this.greeted) return;
-    for (let i = 0; i < 24; i++) { const t = this.crew.nearest(this.camera.position); if (t && t.d < 12) break; await sleep(1500); }
-    const t = this.crew.nearest(this.camera.position); if (!t || this.busy || this.greeted) return;
-    this.greeted = true; this.busy = true; const bot = t.bot, p = this.camera.position, ck = this.clock();
     try {
-      bot.convo = 'think';
-      const res = await this.ask({ who: bot.spec.name, kind: 'greet', ctx: bot.ctx(), ...ck }, localGreeting(ck.hour, bot));
-      bot.perform({ type: 'emote', emote: 'wave' }, p); await this.speak(bot, res.say, false);
-    } finally { bot.convo = null; this.busy = false; }
+      for (let i = 0; i < 24; i++) { const t = this.crew.nearest(this.camera.position); if (t && t.d < 12) break; await sleep(1500); }
+      const t = this.crew.nearest(this.camera.position); if (!t || this.busy || this.greeted) return;
+      this.greeted = true; this.busy = true; const bot = t.bot, p = this.camera.position, ck = this.clock();
+      try {
+        bot.convo = 'think';
+        const res = await this.ask({ who: bot.spec.name, kind: 'greet', ctx: bot.ctx() }, localGreeting(ck.hour, bot));
+        this.remember(bot, { role: 'you', text: res.say });
+        bot.perform({ type: 'emote', emote: 'wave' }, p); await this.speak(bot, res.say, false);
+      } finally { bot.convo = null; this.busy = false; }
+    } finally { this.greeted = true; this.sceneT = rnd(30, 50); }
+  }
+
+  // ------------------------------------------------------------ ambient life: the crew chat with each other and with you
+  private tickScene(dt: number) {
+    this.sceneT -= dt; if (this.sceneT > 0) return;
+    this.sceneT = rnd(45, 90);
+    if (!this.ambient || !this.greeted || this.busy || this.recording || this.sceneBusy || this.cur || document.hidden || this.crew.alert || !this.host.canChat()) { this.sceneT = 10; return; }
+    void this.runScene();
+  }
+  private async runScene() {
+    const p = this.camera.position, free = this.crew.bots.filter((b) => b.sleepStage === 0 && !b.convo && b.lk === null && !b.emote);
+    const near = this.crew.nearest(p, true), nearOk = !!near && near.d < 8 && !near.bot.convo && near.bot.sleepStage === 0, now = performance.now();
+    this.sceneBusy = true; this.sceneAbort = false;
+    try {
+      if (nearOk && now - this.lastInitiate > 110000 && (free.length < 2 || Math.random() < 0.35)) { this.lastInitiate = now; await this.initiate(near!.bot); }
+      else if (free.length >= 2) await this.crewBanter(free, nearOk);
+    } finally { this.sceneBusy = false; for (const b of this.crew.bots) b.chat = null; }
+  }
+  /** a crew member walks up on their own and starts talking to you */
+  private async initiate(bot: Bot) {
+    const res = await this.ask({ who: bot.spec.name, kind: 'initiate', ctx: bot.ctx(), history: this.turns(bot) }, { say: 'Hey Commander, got a sec? Somebody has to hear my terrible jokes.', do: { type: 'none' }, ask: true });
+    if (this.sceneAbort || this.busy || this.recording) return;
+    this.remember(bot, { role: 'you', text: res.say });
+    await this.speak(bot, res.say, this.radioTo(bot), true);
+    if (res.ask || /\?\s*["”]?$/.test(res.say)) void this.autoListen(bot);
+  }
+  /** two crew members banter while they work: they face each other, trade jokes, sometimes finish by asking you something */
+  private async crewBanter(free: Bot[], nearPlayer: boolean) {
+    const p = this.camera.position, pool = [...free].sort(() => Math.random() - 0.5);
+    let a = pool[0], o = pool[1]; if (`${a.spec.name}${o.spec.name}` === this.lastPair || `${o.spec.name}${a.spec.name}` === this.lastPair) { const alt = pool.find((b, i) => i > 1); if (alt) o = alt; }
+    this.lastPair = `${a.spec.name}${o.spec.name}`;
+    const toPlayer = nearPlayer && Math.random() < 0.4 && Math.hypot(p.x - o.x, p.z - o.z) < 9;
+    let lines: { who: string; say: string; emote?: string }[] = [], ask = false;
+    try {
+      const r = await fetch('/api/crew', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(12000), body: JSON.stringify({ kind: 'banter', who: a.spec.name, other: o.spec.name, ctxA: a.ctx(), ctxB: o.ctx(), world: this.host.world(), jobs: this.host.jobs(), recent: this.recent.slice(-8), toPlayer, ...this.clock() }) });
+      if (r.ok) { const j = (await r.json()) as { lines?: typeof lines; ask?: boolean }; lines = j.lines ?? []; ask = j.ask === true; }
+    } catch { lines = []; }
+    if (lines.length < 2 || this.sceneAbort || this.busy || this.recording) return;
+    a.chat = o; o.chat = a;
+    const bots = [a, o], pre = lines.map((l) => { const sp = bots.find((b) => b.spec.name === l.who) ?? a; return this.voiceReplies ? this.tts(l.say, sp).catch(() => null) : Promise.resolve(null); });
+    let last = a;
+    for (let i = 0; i < lines.length; i++) {
+      if (this.sceneAbort) break;
+      const l = lines[i], sp = bots.find((b) => b.spec.name === l.who) ?? a; last = sp;
+      if (l.emote) sp.perform({ type: 'emote', emote: l.emote }, p);
+      this.recent.push(`${sp.spec.first}: ${l.say}`); this.recent = this.recent.slice(-10);
+      await this.speak(sp, l.say, this.radioTo(sp), false, pre[i]);
+      await sleep(rnd(150, 450));
+    }
+    if (ask && !this.sceneAbort) { this.remember(last, { role: 'you', text: lines[lines.length - 1].say }); void this.autoListen(last); }
   }
 
   // ------------------------------------------------------------ microphone (push to open, auto-stops on silence)
@@ -273,24 +410,34 @@ export class CrewTalk {
     if (n === 'NoMediaDevices') return 'MIC NEEDS HTTPS OR LOCALHOST';
     return `MIC ERROR (${n || 'unknown'}), TYPE INSTEAD`;
   }
-  async toggleMic() {
+  private async micGranted() { try { return (await navigator.permissions.query({ name: 'microphone' as PermissionName })).state === 'granted'; } catch { return false; } }
+  /** after a crew question the mic opens by itself for a few seconds so you can just answer (only once the browser has already granted the mic) */
+  private async autoListen(bot: Bot) {
+    if (!this.handsFree || this.recording || this.busy || bot.sleepStage >= 2) return;
+    if (!(await this.micGranted())) return;
+    await sleep(300); if (this.recording || this.busy || this.cur) return;
+    await this.toggleMic('crew', { auto: true, force: bot });
+  }
+  /** target 'crew' = whoever is nearest/named/everyone; 'houston' = the radio (the comms pad sends it and Houston answers by voice) */
+  async toggleMic(target: 'crew' | 'houston' = 'crew', opt: { auto?: boolean; force?: Bot } = {}) {
     if (this.recording) { this.stop?.(true); return; }
     if (this.busy) return;
+    this.endScene(); const auto = !!opt.auto; this.micMode = { target, auto, force: opt.force };
     let stream: MediaStream;
     try { stream = await this.micStream(); }
-    catch (e) { console.warn('[crew mic]', e); this.status(this.micMessage(e), 7000); this.openText(); return; }
+    catch (e) { console.warn('[crew mic]', e); if (!auto) { this.status(this.micMessage(e), 7000); this.openText(); } return; }
     const c = this.ac(), node = c.createMediaStreamSource(stream), an = c.createAnalyser(); an.fftSize = 1024; node.connect(an);
     const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find((m) => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) ?? '';
     const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined), chunks: Blob[] = [];
     rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
     this.recording = true; const t0 = performance.now(); let noise = 0, nn = 0, spoke = false, last = t0, done = false; const buf = new Float32Array(an.fftSize);
-    const who = this.crew.nearest(this.camera.position, true), tag = who ? who.bot.spec.first.toUpperCase() : 'CREW';
-    this.status(`LISTENING · ${tag} · V TO SEND · ESC CANCELS`, 0, true);
+    const who = opt.force ?? this.crew.nearest(this.camera.position, true)?.bot, tag = who ? who.spec.first.toUpperCase() : 'CREW';
+    this.status(target === 'houston' ? 'TRANSMITTING TO HOUSTON · B TO SEND · ESC CANCELS' : auto ? `${tag} IS LISTENING FOR YOUR REPLY…` : `LISTENING · ${tag} · V TO SEND · ESC CANCELS`, 0, true);
     const finish = (send: boolean) => {
       if (done) return; done = true; this.recording = false; this.stop = null; if (rec.state !== 'inactive') rec.stop();
       rec.onstop = () => {
         stream.getTracks().forEach((t) => t.stop()); node.disconnect();
-        if (!send || !spoke) { this.status(send ? 'DIDN’T CATCH ANYTHING' : '', send ? 1800 : 0); return; }
+        if (!send || !spoke) { this.status(send && !auto ? 'DIDN’T CATCH ANYTHING' : '', send && !auto ? 1800 : 0); return; }
         void this.transcribe(new Blob(chunks, { type: rec.mimeType || mime || 'audio/webm' }));
       };
     };
@@ -298,7 +445,7 @@ export class CrewTalk {
     const tick = () => {
       if (done) return; an.getFloatTimeDomainData(buf); let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i]; const rms = Math.sqrt(s / buf.length), now = performance.now();
       if (now - t0 < 350) { noise += rms; nn++; } else if (rms > Math.max(0.018, (noise / Math.max(1, nn)) * 2.8)) { spoke = true; last = now; }
-      if (spoke && now - last > 1150) return finish(true); if (now - t0 > 14000) return finish(true); if (!spoke && now - t0 > 7000) return finish(false);
+      if (spoke && now - last > 1150) return finish(true); if (now - t0 > 14000) return finish(true); if (!spoke && now - t0 > (auto ? 6500 : 7000)) return finish(false);
       setTimeout(tick, 50);
     };
     tick();
@@ -306,13 +453,14 @@ export class CrewTalk {
   cancel() { if (this.recording) this.stop?.(false); }
 
   private async transcribe(blob: Blob) {
-    this.status('TRANSCRIBING…'); this.busy = true; let text = '';
+    const m = this.micMode; this.status(m.auto ? '' : 'TRANSCRIBING…'); this.busy = true; let text = '';
     try {
       const r = await fetch('/api/stt', { method: 'POST', headers: { 'Content-Type': blob.type || 'audio/webm' }, body: blob, signal: AbortSignal.timeout(16000) });
       if (!r.ok) throw new Error('stt ' + r.status); text = String(((await r.json()) as { text?: string }).text ?? '').trim();
-    } catch { this.busy = false; this.status('VOICE RECOGNITION UNAVAILABLE, TYPE INSTEAD (T)', 3500); this.openText(); return; }
+    } catch { this.busy = false; if (!m.auto) { this.status('VOICE RECOGNITION UNAVAILABLE, TYPE INSTEAD (T)', 3500); this.openText(); } return; }
     this.busy = false;
-    if (!text) { this.status('DIDN’T CATCH THAT', 1800); return; }
-    await this.converse(text);
+    if (!text) { if (!m.auto) this.status('DIDN’T CATCH THAT', 1800); return; }
+    if (m.target === 'houston') { this.line('YOU → HOUSTON', text, true); this.busy = true; try { await this.host.houston?.(text); } finally { this.busy = false; } return; }
+    await this.converse(text, m.force);
   }
 }

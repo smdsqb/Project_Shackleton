@@ -334,7 +334,11 @@ const TASKS: TaskDef[] = [
 ];
 /** is the Commander talking to the whole crew? */
 export const isBroadcast = (t: string) => /\b(everyone|everybody|every one|all of you|you all|y'all|you guys|guys|all hands|team|crew|folks|listen up)\b/i.test(t);
-export interface CrewAction { type: string; place?: string; task?: string; emote?: string }
+export interface CrewAction { type: string; place?: string; task?: string; emote?: string; job?: string }
+const EVA_TASKS = new Set(['moonwalk', 'sample', 'dust', 'inspect']), EVA_JOBS = new Set(['clean', 'busfix', 'patch', 'antenna', 'berm']);
+/** does carrying this out mean going outside? (not allowed during a shelter alert) */
+export const needsOutside = (a: CrewAction) => (a.type === 'goto' && a.place === 'outside') || (a.type === 'task' && EVA_TASKS.has(a.task ?? '')) || (a.type === 'job' && EVA_JOBS.has(a.job ?? ''));
+export const isEvaJob = (id: string) => EVA_JOBS.has(id);
 const EMOTES: Record<string, number> = { stumble: 1.5, nod: 1.8, wave: 2.6, salute: 2.2, thumbsup: 2.4, shrug: 2.2, jump: 1.6, dance: 6, facepalm: 2.4 };
 const LABEL: Record<string, string> = { sleep: 'sleeping in a bunk', shelter: 'sheltering in the middle of the hab because of an alert', stargaze: 'stargazing out of a porthole', photo: 'taking photos of the sky from a porthole', journal: 'writing in a journal by the window', coffee: 'making a drink in the galley', stretch: 'stretching out', update: 'running a software update at the comms console', radio: 'doing a radio check at the comms console', rack: 'checking the life-support racks', lab: 'working at a lab bench', moonwalk: 'out on a moonwalk', sample: 'collecting rock samples outside', dust: 'brushing dust off the solar array outside', inspect: 'inspecting outdoor equipment' };
 function placeStop(place: string, b: Bot): Stop | null {
@@ -354,6 +358,21 @@ function placeStop(place: string, b: Bot): Stop | null {
 }
 // where each crew member stands when the hab is on alert: the open floor in the middle, clear of the lab tables and the galley
 const shelterSpot = (i: number): Stop => ({ x: [-1.2, -0.4, 0.4, 1.2][i % 4], z: i % 2 ? -0.35 : 0.4, yaw: PI, anim: 'tablet', dwell: 1e9 });
+/** where the crew physically do each repair job the sim knows about (the sim itself runs the clock and the outcome) */
+const rackAt = (a: number, anim = 'repair', dwell = 40): Stop => ({ ...pol(5.55, a * PI), yaw: faceOut(a * PI), anim, dwell });
+const JOB_SITES: Record<string, () => Stop[]> = {
+  clean: () => [{ x: 12.0, z: 6, yaw: PI / 2, anim: 'dust', dwell: 40, eva: true }],
+  busfix: () => [{ x: 12.0, z: 6.9, yaw: PI / 2, anim: 'repair', dwell: 40, eva: true }],
+  patch: () => [{ ...pol(HAB_R + 1.3, 1.25), yaw: faceOut(1.25) + PI, anim: 'repair', dwell: 40, eva: true }],
+  antenna: () => [{ ...pol(HAB_R + 1.3, 2.0), yaw: faceOut(2.0) + PI, anim: 'repair', dwell: 40, eva: true }],
+  berm: () => [0.9, 1.6, 2.3].map((a) => ({ ...pol(HAB_R + 4, a), yaw: faceOut(a), anim: 'sample', dwell: 25, eva: true })),
+  sealant: () => [{ ...pol(5.6, 2.75), yaw: faceOut(2.75), anim: 'repair', dwell: 60 }],
+  bed: () => [rackAt(-0.62)], stack: () => [rackAt(-0.48)], coolant: () => [rackAt(-0.62)], waterline: () => [rackAt(-0.76)],
+  inspect: () => [-0.48, -0.62, -0.76].map((a) => rackAt(a, 'tablet', 14)),
+  extinguish: () => [{ ...pol(5.5, -0.3 * PI), yaw: faceOut(-0.3 * PI), anim: 'repair', dwell: 30 }],
+  isolate: () => [{ ...pol(5.78, -0.9 * PI), yaw: faceOut(-0.9 * PI), anim: 'type', dwell: 40 }],
+  medic: () => [{ x: 0.4, z: 0.2, yaw: 0, anim: 'tablet', dwell: 40 }],
+};
 const NEXT: Record<Slot, Slot> = { sleep: 'window', window: 'comms', comms: 'eva', eva: 'sleep' };
 
 // ---------------------------------------------------------------- one crew member
@@ -364,6 +383,7 @@ export class Bot {
   cur: Pose = { ...BASE }; py = 0.9; roll = 0; rollT = rnd(40, 90); blink = 0; blinkT = rnd(1, 4); sacT = 0; sac: [number, number] = [0, 0];
   gaze: [number, number] = [0, 0]; glance = 0; glanceT = rnd(6, 16); talk = 0; cruise: number;
   convo: 'listen' | 'think' | 'speak' | null = null; lip = 0; emote: { name: string; t: number; dur: number } | null = null;
+  jobId: string | null = null; chat: Bot | null = null; private tv = new THREE.Vector3();
   kx = 0; kz = 0; bumpT = 0; rushed = false; deferStop = -1; ov = 0; follow = false; followT = 0; ackT = rnd(4, 12); pyAdd = 0;
   constructor(public spec: Spec, private crew: Crew) { this.rig = build(spec); this.cruise = 1.05 * spec.tempo; this.setEva(false); }
 
@@ -388,7 +408,7 @@ export class Bot {
   assign(slot: Slot, immediate: boolean, bay?: number) {
     if (!this.inLock()) this.dropLock();   // a half-cycled airlock is finished first (goStop defers), so keep holding it until then
     this.slot = slot; if (bay !== undefined) this.bay = bay;
-    this.ov = 0; this.follow = false;
+    this.ov = 0; this.follow = false; this.jobId = null;
     this.pickTask(); if (immediate) this.teleport(); else this.goStop(0);
   }
   private pickTask() {
@@ -466,10 +486,10 @@ export class Bot {
     return { name: this.spec.name, first: this.spec.first, role: this.spec.role, state, doing };
   }
   private startOverride(sec: number, stops: Stop[]) { this.ov = sec; this.follow = false; this.stops = stops; this.goStop(0); }
-  private endOverride() { this.ov = 0; this.follow = false; if (this.slot === 'sleep') this.bay = this.freeBay(); this.pickTask(); this.goStop(0); }
+  endOverride() { this.ov = 0; this.follow = false; this.jobId = null; if (this.slot === 'sleep') this.bay = this.freeBay(); this.pickTask(); this.goStop(0); }
   /** carry out an order from the Commander; it lapses after a while and the person drifts back to their duty */
-  perform(a: CrewAction, player: THREE.Vector3) {
-    if (this.crew.alert && a.type !== 'emote') return;   // a shelter alert outranks everything
+  perform(a: CrewAction, player: THREE.Vector3): boolean {
+    if (this.crew.alert && needsOutside(a)) return false;   // during a shelter/lockdown alert nobody goes outside; everything inside still goes
     if (a.type !== 'emote' && a.type !== 'none') {
       if (this.pending) { this.slot = this.pending; this.pending = null; this.waitFor = null; this.hold = 0; }   // an order beats a shift change in progress
       this.convo = null; this.waitLeft = 0;
@@ -486,8 +506,10 @@ export class Bot {
       case 'follow': this.task = null; this.stops = [{ x: this.x, z: this.z, yaw: this.yaw, anim: 'idle', dwell: 5, eva: this.eva, faceP: true }]; this.si = 0; this.ov = 55; this.follow = true; this.followT = 0; this.nodes = []; this.doing = true; break;
       case 'stop': if (this.sleepStage === 0) { this.task = null; this.startOverride(40, [{ x: this.x, z: this.z, yaw: this.yaw, anim: 'idle', dwell: 40, eva: this.eva }]); } break;
       case 'goto': { const st = placeStop(a.place ?? '', this); if (st) { this.task = null; this.startOverride(st.anim === 'sleep' ? 150 : 70, [st]); } break; }
+      case 'job': { const sites = JOB_SITES[a.job ?? '']; if (!sites) return false; this.task = null; this.startOverride(900, sites()); this.jobId = a.job ?? null; break; }
       case 'task': { const t = TASKS.find((k) => k.id === a.task && k.id !== 'sleep'); if (t) { this.task = t; this.startOverride(min(t.dur[1], 100), t.stops(this)); } break; }
     }
+    return true;
   }
   private overlay(p: Pose, T: number, dt: number) {
     const c = this.sleepStage === 0 ? this.convo : null; let up = 0;
@@ -569,7 +591,7 @@ export class Bot {
     } else { this.v *= 0.8; }
     if (this.doing && !this.nodes.length && this.waitLeft <= 0 && !this.convo) {
       const s = this.stops[this.si];
-      if (this.sleepStage === 0) this.yaw += clamp(wrap((s.faceP ? this.bearing(cam) : s.yaw) - this.yaw), -2 * dt, 2 * dt);
+      if (this.sleepStage === 0) this.yaw += clamp(wrap((s.faceP ? this.bearing(cam) : this.chat && this.chat.sleepStage === 0 && hypot(this.chat.x - this.x, this.chat.z - this.z) < 10 ? this.bearing(this.tv.set(this.chat.x, 0, this.chat.z)) : s.yaw) - this.yaw), -2 * dt, 2 * dt);
       if (!s.faceP && !this.follow && this.sleepStage === 0 && this.kx === 0 && this.kz === 0 && this.lk === null && hypot(this.x - s.x, this.z - s.z) > 0.4) { this.nodes = [{ x: s.x, z: s.z }]; this.doing = false; }   // shoved off their spot: step back to it
       this.dwell -= dt; this.taskLeft -= dt;
       if (!this.pending && (this.slot !== 'sleep' || this.ov > 0)) {
@@ -597,10 +619,11 @@ export class Bot {
     let [gy, gp] = gaze;
     this.sacT -= dt; if (this.sacT <= 0) { this.sacT = rnd(0.7, 2.4); this.sac = [rnd(-0.07, 0.07), rnd(-0.04, 0.04)]; }
     this.glanceT -= dt; if (this.glanceT <= 0 && !this.asleep && this.sleepStage === 0) { this.glanceT = rnd(9, 22); const dd = hypot(cam.x - this.x, cam.z - this.z); if (dd < 7) this.glance = rnd(1.3, 2.6); }
-    if (this.convo && this.sleepStage === 0) this.glance = max(this.glance, 0.3);
+    const ch = this.chat && this.chat.sleepStage === 0 ? this.chat : null, look = ch ? this.tv.set(ch.x, this.crew.floor(ch.x, ch.z) + ch.py + 0.4 * ch.spec.h, ch.z) : cam;   // eyes on whoever they are chatting with
+    if ((this.convo || ch) && this.sleepStage === 0) this.glance = max(this.glance, 0.3);
     if (this.glance > 0) {
-      this.glance -= dt; const dx = cam.x - this.x, dz = cam.z - this.z, lx = dx * cos(this.yaw) - dz * sin(this.yaw), lz = dx * sin(this.yaw) + dz * cos(this.yaw), yy = atan2(lx, lz);
-      if (abs(yy) < 1.9) { gy = yy; gp = atan2(cam.y - (this.crew.floor(this.x, this.z) + this.py + 0.4 * this.spec.h), hypot(lx, lz)); }
+      this.glance -= dt; const dx = look.x - this.x, dz = look.z - this.z, lx = dx * cos(this.yaw) - dz * sin(this.yaw), lz = dx * sin(this.yaw) + dz * cos(this.yaw), yy = atan2(lx, lz);
+      if (abs(yy) < 1.9) { gy = yy; gp = atan2(look.y - (this.crew.floor(this.x, this.z) + this.py + 0.4 * this.spec.h), hypot(lx, lz)); }
     }
     const ga = 1 - Math.exp(-dt * 7); this.gaze[0] += (gy + this.sac[0] - this.gaze[0]) * ga; this.gaze[1] += (gp + this.sac[1] - this.gaze[1]) * ga;
     const hy = clamp(this.gaze[0] * 0.55, -0.9, 0.9), hx = -clamp(this.gaze[1] * 0.5, -0.5, 0.45);
@@ -649,6 +672,7 @@ export class Bot {
       case 'tablet': { const c = T % 10, up = c > 7 ? 1 : 0; return o({ lsX: -0.55, leX: -1.7, leY: 1.25, rsX: -0.75, reX: -1.55, rwX: 0.1 * sin(T * 8), hdX: lerp(0.32, -0.02, up), chX: 0.06, hdY: up * 0.25 * sin(T) }, [up * 0.3 * sin(T * 0.8), up ? 0.1 : -0.4], ['tablet', null]); }
       case 'lab': { const lk = sin(T * 0.45) > 0.6 ? 1 : 0; return o({ lsX: -0.75 + 0.1 * sin(T * 1.3), leX: -1.15, rsX: -0.7 + 0.1 * sin(T * 0.9 + 1), reX: -1.2, chX: 0.22, spX: 0.1, hdX: lerp(0.35, 0, lk) }, [lk * 0.4 * sin(T), lk ? 0.2 : -0.45]); }
       case 'sample': { const c = T % 20, dn = clamp(min(c / 2, (18 - c) / 2), 0, 1); return o({ lhX: -1.05 * dn, rhX: -1.0 * dn, lkX: lerp(0.05, 1.35, dn), rkX: lerp(0.05, 1.3, dn), spX: lerp(0.02, 0.75, dn), chX: 0.25 * dn, hdX: -0.3 * dn, lsX: lerp(0, -0.9, dn), leX: -0.5, rsX: lerp(0, -1.15, dn) + 0.25 * sin(T * 2.2) * dn, reX: -0.5 - 0.3 * dn }, [0, -0.5 * dn], dn > 0.5 ? ['bag', 'scoop'] : ['bag', null]); }
+      case 'repair': { const w = sin(T * 7), w2 = sin(T * 9 + 1), up = sin(T * 0.4) > 0.8 ? 1 : 0; return o({ chX: 0.25, spX: 0.18, lsX: -1.05 + 0.1 * w2, leX: -1.3, lwX: 0.2 * w, rsX: -1.0 + 0.14 * w, reX: -1.45 + 0.1 * w2, rwX: 0.25 * w2, hdX: 0.2 - 0.3 * up, lkX: 0.12, rkX: 0.12 }, [up ? 0.3 * sin(T) : 0, up ? 0.1 : -0.3]); }
       case 'dust': return o({ rsX: -1.55 + 0.3 * sin(T * 3.1), reX: -0.4, lsX: -1.1, leX: -0.8, spX: 0.08, hdX: -0.2 }, [0, 0.4], [null, 'brush']);
       case 'look': { const c = T % 12, ph = c > 8 && c < 10.5 ? 1 : 0; return o({ chX: 0.015 * sin(T * 1.5), hdY: 0.1 * sin(T * 0.2), rsX: lerp(0.05, -1.25, ph), reX: lerp(-0.3, -1.7, ph), rsZ: -0.12, lsX: -0.2, leX: -1.2, spX: 0.04 }, [0.7 * sin(T * 0.45), 0.1], [null, ph > 0.5 ? 'camera' : null]); }
       case 'sitbed': return o({ lhX: -1.45, rhX: -1.5, lkX: 1.45, rkX: 1.4, spX: 0.1, chX: 0.08, lsX: -0.3, lsZ: 0.12, leX: -0.5, rsX: -0.3, reX: -0.5, hdX: 0.1 }, [0, 0]);
@@ -660,6 +684,7 @@ export class Bot {
 
 // ---------------------------------------------------------------- crew manager
 export class Crew {
+  jobProbe: (() => string | null) | null = null; onJobDone: ((b: Bot, id: string) => void) | null = null;
   bots: Bot[] = []; alert = false; px = 0; pz = 0; pushX = 0; pushZ = 0; onBump: ((b: Bot, strength: number) => void) | null = null; private prev = new THREE.Vector3(NaN, 0, 0); held: (Bot | null)[] = [null, null]; private next = rnd(CREW_CFG.rotateMin, CREW_CFG.rotateMax); private open = [0, 0, 0];
   constructor(scene: THREE.Scene, readonly ground: (x: number, z: number) => number, readonly hab: CrewHab) {
     for (const s of ROSTER) { const b = new Bot(s, this); this.bots.push(b); scene.add(b.rig.root); }
@@ -686,6 +711,13 @@ export class Crew {
   }
   /** who the Commander is calling by name, if anyone */
   byName(text: string): Bot | null { const t = text.toLowerCase(); return this.bots.find((b) => new RegExp(`\\b(${b.spec.first}|${b.spec.name})\\b`, 'i').test(t)) ?? null; }
+  canObey(a: CrewAction) { return !(this.alert && needsOutside(a)); }
+  /** a repair order: the sim runs the job; the lead (and, for an EVA job, a buddy) go and physically do it */
+  assignJob(lead: Bot, id: string, player: THREE.Vector3) {
+    if (!lead.perform({ type: 'job', job: id }, player)) return false;
+    if (EVA_JOBS.has(id)) { const buddy = this.bots.filter((b) => b !== lead && b.sleepStage === 0 && !b.jobId && b.lk === null).sort((a, b) => hypot(a.x - lead.x, a.z - lead.z) - hypot(b.x - lead.x, b.z - lead.z))[0]; buddy?.perform({ type: 'job', job: id }, player); }
+    return true;
+  }
   /** how far the player was shoved by crew this frame (apply it, then it clears) */
   takePush() { const r = { x: this.pushX, z: this.pushZ }; this.pushX = this.pushZ = 0; return r; }
   playerOutside(pos: THREE.Vector3) { return hypot(pos.x, pos.z) > HAB_R + TL + 0.3; }
@@ -713,6 +745,7 @@ export class Crew {
       if (toward > 0.2 && b.bumpT <= 0) { b.bumped(cam); this.onBump?.(b, toward); }
     }
     for (const b of this.bots) b.update(dt, cam);
+    if (this.jobProbe) { const cur = this.jobProbe(); for (const b of this.bots) if (b.jobId && b.jobId !== cur) { const id = b.jobId; b.endOverride(); b.emote = { name: 'thumbsup', t: 0, dur: EMOTES.thumbsup }; this.onJobDone?.(b, id); } }
     this.hab.lockHeld = this.held.map(Boolean);
     this.hab.curtains.forEach((g, i) => { // bunk curtain draws back while someone is in the bay
       const occ = this.bots.some((b) => b.sleepStage > 0 && b.bay === i) ? 1 : 0; this.open[i] += (occ - this.open[i]) * min(1, dt * 1.5);

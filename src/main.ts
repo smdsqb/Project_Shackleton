@@ -7,7 +7,7 @@ import { buildExterior, propBlocked, propHit } from './exterior';
 import { Rover } from './rover';
 import { buildRocks, ROCK_CAP } from './rocks';
 import { bodyDir, loadEphemeris } from './ephemeris';
-import { Sim, SIM } from './sim';
+import { Sim, SIM, JOBS, type JobId } from './sim';
 import { Hab, WALL_H, CAP_H } from './hab';
 import { Player } from './player';
 import { Comms, type Link } from './comms';
@@ -99,7 +99,11 @@ function buildWorld() {
   const gy = heightAt(0, 0);
   hab = new Hab(scene, gy);
   crew = new Crew(scene, heightAt, hab);
-  crewTalk = new CrewTalk(crew, camera);
+  crewTalk = new CrewTalk(crew, camera, {
+    houston: (t) => comms.voiceSend(t), world: crewWorld, jobs: crewJobs, startJob: crewStartJob, lastLog: () => sim.log[sim.log.length - 1]?.text ?? '',
+    canChat: () => started && locked && !comms.padOpen && !comms.isOpen && !ui.isTabletOpen,
+  });
+  crew.jobProbe = () => sim.job?.id ?? null;
   hab.onComms = () => openComms('hab');
   dishPos.set(0, gy + WALL_H + CAP_H + 0.9, 0);
   arrayPos.set(14, heightAt(14, 6) + 12, 6);
@@ -152,7 +156,18 @@ function telemetry() {
     location: hab?.where ?? '', suit: hab?.suitState ?? '', suitHours: hab?.suitHours ?? 0, earthElDeg: earthEl * 57.2958,
   };
 }
+/** the base as the crew know it: status line, plus which repair jobs can start right now (a busy crew can be pulled off a job by an order) */
+function crewWorld() {
+  const t = telemetry(), bits = [`sol ${t.missionDay}`, `battery ${t.batteryPct.toFixed(0)}%`, `solar ${t.genKw.toFixed(1)} kW against a ${t.loadKw.toFixed(1)} kW load${t.sunlit ? '' : ' (in shadow)'}`, `cabin ${t.pressureKpa.toFixed(0)} kPa and ${t.tempC.toFixed(0)} C`, `O2 ${t.ppO2.toFixed(1)} kPa`, `CO2 ${t.co2.toFixed(1)} mmHg`, `dust on the array ${(sim.dust * 100).toFixed(0)}%`];
+  if (t.alerts) bits.push(`alerts: ${t.alerts}`);
+  if (sim.job) bits.push(`the repair crew is busy: ${JOBS[sim.job.id].name}, ${sim.job.left.toFixed(1)} h left`);
+  return bits.join('; ');
+}
+const BUSY = 'CREW BUSY WITH ANOTHER TASK';
+function crewJobs() { return (Object.keys(JOBS) as JobId[]).map((id) => { const why = sim.canStart(id); return { id, ok: !why || why === BUSY, why: why && why !== BUSY ? why : '' }; }); }
+function crewStartJob(id: string) { const why = sim.canStart(id as JobId); if (why && why !== BUSY) return why; return sim.startJob(id as JobId, true); }
 const comms = new Comms({
+  mic: () => void crewTalk?.toggleMic('houston'),
   telemetry, link, now: () => new Date(simMs), delayS: () => SIM.commsDelayS,
   onClose: () => { renderer.domElement.requestPointerLock(); },
   onPad: (open, lines, live) => player.setPad(lines, live && open),
@@ -185,6 +200,7 @@ addEventListener('keydown', (e) => {
   if (!locked) return;
   if (e.code === 'KeyV' && !e.repeat) { void crewTalk?.toggleMic(); return; }
   if (e.code === 'KeyT' && !e.repeat) { e.preventDefault(); crewTalk?.openText(); return; }
+  if (e.code === 'KeyB' && !e.repeat) { void (async () => { if (crewTalk?.recording) { void crewTalk.toggleMic('houston'); return; } if (await comms.ensureReady()) void crewTalk?.toggleMic('houston'); })(); return; }
   if (e.code === 'KeyE') { if (rover?.hasPrompt) rover.press(); else hab?.press(); }
   else if (e.code === 'KeyL' && rover?.inside) rover.toggleLights();
   else if (e.code === 'KeyX' && rover?.mode === 'driving') rover.toggleParkBrake();
@@ -252,7 +268,7 @@ function frame() {
     const alertOn = sim.shelter || !!sim.lockdown;
     crew?.setAlert(alertOn); sim.crewOutside = crew?.outside ?? 0;      // every astronaut hauls back to the hab
     if (running) crew?.update(dt, camera.position);
-    crewTalk?.update();
+    crewTalk?.update(dt);
     hab.lockdown = !!sim.lockdown; hab.alarm = sim.fire > 0 || sim.batteryHazard > 0.5;
     const away = hab.exposed || hab.where === 'SURFACE' || hab.where === 'ROVER CABIN';
     if (alertOn && away && running) { recallT -= dt; if (recallT <= 0) { beep('recall'); recallT = 2; } ui.banner('RETURN TO THE HAB NOW'); }
