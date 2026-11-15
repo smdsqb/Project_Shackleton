@@ -31,8 +31,12 @@ export function buildExterior(scene: THREE.Scene, heightAt: (x: number, z: numbe
     m.position.set(x, heightAt(x, z) + 0.032, z); m.renderOrder = 1; scene.add(m);
   };
 
-  // landing / work pad
-  const pad = new THREE.Mesh(new THREE.CircleGeometry(14, 72).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: tileTexture('#8f8c88', '#77746f', 14), roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
+  // landing / work pad. A RING, not a full disc: the old disc ran right under the Hab, 5 mm below the deck
+  // plate, and at room-scale distances that gap is smaller than the depth-buffer quantum (camera depth spans
+  // 0.1-45000 m) - with the pad's polygon-offset pulling it forward it won the depth fight a few metres out
+  // and the Hab floor flipped to pale concrete with a wide, faint 2 m grid. A hole under the hull (the skirt
+  // and its foot ring reach ~7.25 m) removes the coincident surfaces entirely, so no depth setting can flip it.
+  const pad = new THREE.Mesh(new THREE.RingGeometry(7.4, 14, 72).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: tileTexture('#8f8c88', '#77746f', 14), roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
   pad.position.set(0, y0 + 0.025, 0); pad.receiveShadow = true; scene.add(pad);
   // the white pad ring: clean painted striping
   const ringM = new THREE.Mesh(new THREE.RingGeometry(13.6, 13.8, 96).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: ringTexture(), transparent: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
