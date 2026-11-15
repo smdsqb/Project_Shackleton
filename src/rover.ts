@@ -32,14 +32,14 @@ export class Rover {
   private thr = 0; private brk = 0; private roll = 0; private pitch = 0; private lastA = 0;
   private cycle: { t: number; total: number; kind: 'enter' | 'exit' | 'repair' | 'restock'; stage: number; part?: number } | null = null;
   private hatchK = 0; private hatchTarget = 0; private toastT = 0; private scrT = 0; private warnT = 0; private beepT = 0; private time = 0; private firstAlert = new Set<string>();
-  private spot: THREE.SpotLight; private dust: Pool; private fx: Pool;
+  private spot: THREE.SpotLight; private fx: Pool;
   private link = { up: false, dist: 0, los: false, reason: 'NOT CHECKED' }; private linkT = 0; private ant = new THREE.Vector3(); private tmp = new THREE.Vector3(); lastPlayer = new THREE.Vector3(); private suitOk = false;
   private frontDmg = 0; private dentUsed = new Set<number>(); private strikeCool = 0; private stuck = 0; private lookAhead = { upG: 0, downG: 0, drop: 0, rockDist: 99, field: false };
 
   constructor(scene: THREE.Scene, private solid: (x: number, z: number, r: number) => boolean, private habAnt: () => THREE.Vector3) {
     this.m = buildRoverModel(); scene.add(this.m.root);
     this.spot = new THREE.SpotLight(0xfff4e0, 0, 80, 0.55, 0.6, 1.4); this.spot.position.set(5.0, 2.2, 0); this.spot.target.position.set(40, 0.5, 0); this.m.root.add(this.spot, this.spot.target);
-    this.dust = makePool(scene, 200, { color: 0x8a857c, size: 0.14, opacity: 0.85 }); this.fx = makePool(scene, 160, { size: 0.1, opacity: 1, colors: true });
+    this.fx = makePool(scene, 160, { size: 0.1, opacity: 1, colors: true });
     const ws = this.m.wheels, hs = this.contacts(); this.hcs = hs.slice(); this.hcPrev = hs.slice(); this.cl = hs.map(() => 0); this.hubY = ws.map(() => WHEEL_R);
     this.fitPlane(hs, true); this.animate(0);
   }
@@ -383,16 +383,13 @@ export class Rover {
 
   private particles(dt: number) {
     const c = Math.cos(this.heading), s = Math.sin(this.heading), sp = Math.abs(this.speed), moving = sp > 0.8;
-    const rate = (moving ? 3 : 0) + (this.skidding ? 6 : 0);
-    for (let e = 0; e < rate; e++) { const w = this.m.wheels[(Math.random() * 6) | 0], wx = this.x + w.x * c + w.side * TRACK * s, wz = this.z - w.x * s + w.side * TRACK * c, dir = -Math.sign(this.speed || 1);
-      emit(this.dust, wx, heightAt(wx, wz) + 0.1, wz, c * dir * sp * 0.5 + (Math.random() - 0.5) * 1.2, 0.8 + Math.random() * 1.6, -s * dir * sp * 0.5 + (Math.random() - 0.5) * 1.2, 2.2 + Math.random(), 0.54, 0.52, 0.49); }
     // sparks from broken wheels, coolant jets from failed brakes or wheel units (ballistic, since there is no air)
     this.m.wheels.forEach((w, i) => {
       const wx = this.x + w.x * c + w.side * TRACK * s, wz = this.z - w.x * s + w.side * TRACK * c, base = heightAt(wx, wz);
       if (this.wheelHp[i] < 45 && moving && Math.random() < 0.5) emit(this.fx, wx, base + 0.15, wz, (Math.random() - 0.5) * 2, 1 + Math.random() * 2, (Math.random() - 0.5) * 2, 0.8 + Math.random() * 0.6, 1, 0.55, 0.12);
       if ((this.wheelHp[i] < 20 || this.brakeHp < 30) && Math.random() < 0.25) emit(this.fx, wx, base + 0.5, wz, w.side * (1 + Math.random() * 1.5), 1.5 + Math.random() * 2, (Math.random() - 0.5), 1.4 + Math.random(), 0.88, 0.94, 1);
     });
-    stepPool(this.dust, dt); stepPool(this.fx, dt);
+    stepPool(this.fx, dt);
   }
 
   private drawScreens() {

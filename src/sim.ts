@@ -39,6 +39,8 @@ export const JOBS = {
   busfix: { name: 'Repair the array power string', hours: 4, kw: 0, eva: true, why: 'EVA at the array. Restores lost output.' },
 } as const;
 export type JobId = keyof typeof JOBS;
+/** one-shot visual events for the effects layer (the sim stays pure; src/fx.ts consumes these) */
+export type FxEvt = { type: 'meteors'; n: number; hitArray?: boolean; hitHull?: boolean } | { type: 'streaks'; n: number } | { type: 'explosion'; where: 'battery' | 'array' | 'lab' } | { type: 'sparks'; where: 'array' | 'lab' };
 export type Alert = { level: 'info' | 'caution' | 'warning'; text: string };
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const KG_PER_MMHG_CO2 = 1 / 1.38; // 1 kg of CO2 raises ppCO2 by 1.38 mmHg in a 300 m3 cabin
@@ -61,6 +63,7 @@ export class Sim {
   lockdown: { reason: string; left: number; storm: number } | null = null; quakeS = 0; fire = 0; batteryHazard = 0; batteryHealth = 1; coolantK = 1;
   waterLeakKgH = 0; injured = false; blackoutLeft = 0; arrayCap = 1; crewOutside = 0;
   hidden: { leak: number; at: number } | null = null; suspect: { real: boolean } | null = null;
+  fxq: FxEvt[] = []; stormWarn = false;   // stormWarn: the dust is arriving while the crew decides
   get batteryCap() { return SIM.batteryCapKwh * this.batteryHealth; }
   get linkOk() { return this.antennaOk && this.blackoutLeft <= 0; }
   get openHazards() { return [this.leakKpaH > 0, this.fire > 0, this.batteryHazard > 0, this.injured, !!this.lockdown, this.waterLeakKgH > 0, this.coolantK < 1, this.blackoutLeft > 0, this.scrubberHealth < 1, this.oxyHealth < 1, !this.antennaOk, this.arrayHealth < 0.8].filter(Boolean).length; }
@@ -167,7 +170,7 @@ export class Sim {
     if (this.lockdown) { this.lockdown.left -= h; if (this.lockdown.left <= 0) { this.say(`All clear: ${this.lockdown.reason.toLowerCase()} has passed. Hatches unsealed.`); this.lockdown = null; if (this.shelter && !this.spe) { this.shelter = false; this.say('Crew leaves the storm shelter.'); } } }
     if (this.blackoutLeft > 0) { this.blackoutLeft = Math.max(0, this.blackoutLeft - h); if (this.blackoutLeft === 0) this.say('Radio blackout over. Earth link is back.'); }
     if (this.hidden && this.t >= this.hidden.at) { this.leakKpaH = Math.max(this.leakKpaH, this.hidden.leak); this.hidden = null; this.say('Slow pressure loss detected. Something cracked in the quake.'); }
-    if (this.batteryHazard > 0) { this.batteryHazard += (0.1 + 0.04 * total) * h; if (this.batteryHazard >= 1) { this.batteryHazard = 0; this.batteryHealth *= 0.6; this.batteryKwh = Math.min(this.batteryKwh, this.batteryCap); this.fire = Math.max(this.fire, 0.4); this.say('BATTERY CELL FIRE. 40% of the battery is gone.'); } }
+    if (this.batteryHazard > 0) { this.batteryHazard += (0.1 + 0.04 * total) * h; if (this.batteryHazard >= 1) { this.batteryHazard = 0; this.batteryHealth *= 0.6; this.batteryKwh = Math.min(this.batteryKwh, this.batteryCap); this.fire = Math.max(this.fire, 0.4); this.fxq.push({ type: 'explosion', where: 'battery' }); this.say('BATTERY CELL FIRE. 40% of the battery is gone.'); } }
     if (this.fire > 0) { this.fire = clamp(this.fire + (this.on.lab ? 0.25 : -0.12) * h, 0, 1); if (this.fire === 0) this.say('The fire has gone out.'); }
     if (this.waterLeakKgH > 0) this.waterKg = Math.max(0, this.waterKg - this.waterLeakKgH * h);
 
@@ -239,6 +242,16 @@ export class Sim {
   }
 
   // ---------- readouts for the HUD, the tablet and Houston ----------
+  /** what the crew visibly suffer right now: drives coughing, clutching and dizziness in crew.ts */
+  get symptom(): { kind: 'cough' | 'clutch' | 'dizzy'; n: number } | null {
+    if (this.fire > 0.15) return { kind: 'cough', n: this.fire > 0.5 ? 4 : 2 };
+    if (this.injured) return { kind: 'clutch', n: 1 };
+    if (this.co2 > 7) return { kind: 'dizzy', n: 4 }; if (this.co2 > 4.5) return { kind: 'cough', n: 2 };
+    if (this.ppO2 < 18.5 || this.pressureKpa < 85) return { kind: 'dizzy', n: 3 };
+    if (this.tempC > 31) return { kind: 'dizzy', n: 2 };
+    if (this.doseRateMsvH * 24 > 40 || this.doseMsv > 150) return { kind: 'dizzy', n: 2 };
+    return null;
+  }
   get lightK() { return this.served.lights ? 1 : 0.12; }
   get o2Days() { const use = (SIM.crew * SIM.o2KgPerCrewDay) / 24 - this.oxyKgH; return use <= 0 ? 999 : this.o2Kg / (use * 24); }
   get waterDays() { const use = ((SIM.crew * SIM.waterKgPerCrewDay) / 24) * (this.served.water ? 1 - SIM.waterRecovery : 1) + 1.125 * this.oxyKgH; return use <= 0 ? 999 : this.waterKg / (use * 24); }

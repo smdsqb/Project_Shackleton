@@ -12,7 +12,8 @@ import { Hab, WALL_H, CAP_H } from './hab';
 import { Player } from './player';
 import { Comms, type Link } from './comms';
 import { Director } from './events';
-import { UI, ensureAudio, beep, rumble } from './ui';
+import { UI, ensureAudio, beep, rumble, boom, hiss } from './ui';
+import { Fx } from './fx';
 import { Storm } from './storm';
 
 // Initialize Vercel Web Analytics
@@ -24,19 +25,51 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;   // the sun is a point source in vacuum: shadows are hard-edged, not soft studio blobs
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.5;
+renderer.toneMappingExposure = 1.36;
 document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 30000);
+
+// ---------- image-based lighting: a procedural lunar environment (black sky, one hard sun glare, a bright regolith
+// floor and a faint earthglow) run through PMREM. Without this, every metal, foil and glass surface in the scene
+// renders as flat matte paint; with it, gold foil, steel trim, portholes and windscreens pick up real reflections.
+{
+  const env = new THREE.Scene();
+  // regolith bounce: a big, fairly bright grey floor with a soft hotspot, not a uniform void
+  const ground = new THREE.Mesh(
+    new THREE.SphereGeometry(100, 24, 12, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0x565149, side: THREE.BackSide })
+  );
+  env.add(ground);
+  // the sun: a small intensely bright disc plus a broad faint halo (lunar glare is harsh and unfiltered)
+  const sunBlob = new THREE.Mesh(
+    new THREE.SphereGeometry(4, 16, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffffff })
+  );
+  sunBlob.position.set(38, 55, 22); env.add(sunBlob);
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(11, 16, 8),
+    new THREE.MeshBasicMaterial({ color: 0x3f3f4d })
+  );
+  halo.position.copy(sunBlob.position); env.add(halo);
+  // earthshine: a cool dim glow opposite the sun so shadow sides are not dead black
+  const earthGlow = new THREE.Mesh(
+    new THREE.SphereGeometry(9, 16, 8),
+    new THREE.MeshBasicMaterial({ color: 0x1c2f4d })
+  );
+  earthGlow.position.set(-55, 18, -30); env.add(earthGlow);
+  scene.environment = new THREE.PMREMGenerator(renderer).fromScene(env, 0.04).texture;
+  scene.environmentIntensity = 0.4; // reflections without washing the shadow sides milky
+}
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 45000);
 camera.position.set(-1.5, heightAt(0, 0) + EYE, 0.5);
 scene.add(camera);
-const amb = new THREE.AmbientLight(0x39485c, 0.35); // earthshine and regolith bounce; dropped inside the hab so interior light is not flat
+const amb = new THREE.AmbientLight(0x39485c, 0.19); // earthshine and regolith bounce only: shadow sides stay deep, not milky
 scene.add(amb);
-let ambK = 0.35;
-const sun = new THREE.DirectionalLight(0xfff4e6, 3.2);
+let ambK = 0.19;
+const sun = new THREE.DirectionalLight(0xfff4e6, 4.0);
 sun.castShadow = true;
 sun.shadow.mapSize.set(4096, 4096);
 Object.assign(sun.shadow.camera, { left: -150, right: 150, top: 150, bottom: -150, near: 1, far: 1400 });
@@ -52,7 +85,15 @@ const earth = new THREE.Mesh(new THREE.SphereGeometry(36.5, 48, 48), new THREE.M
 scene.add(sunDisc, earth);
 const starPos = new Float32Array(4000 * 3);
 for (let i = 0; i < 4000; i++) { const v = new THREE.Vector3().randomDirection().multiplyScalar(20000); starPos.set([v.x, Math.abs(v.y), v.z], i * 3); }
-scene.add(new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(starPos, 3)), new THREE.PointsMaterial({ color: 0xffffff, size: 1.8, sizeAttenuation: false })));
+{   // three magnitude classes: the real sky is a handful of bright points over a faint dust of dim ones
+  const starGeo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+  const mk = (n: number, size: number, opacity: number) => {
+    const g = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(starPos.subarray(0, n * 3), 3));
+    scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size, sizeAttenuation: false, transparent: true, opacity, depthWrite: false })));
+  };
+  void starGeo;
+  mk(120, 2.6, 0.95); mk(900, 1.8, 0.75); mk(4000, 1.1, 0.45);
+}
 
 const arrayPos = new THREE.Vector3(14, heightAt(14, 6) + 12, 6);
 
@@ -89,11 +130,45 @@ function patch(size: number, segs: number, yOff: number, mat: THREE.Material, ho
 function buildWorld() {
   const tex = regolithTexture();
   patch(700, 600, 0, new THREE.MeshStandardMaterial({ color: 0x9a968f, map: tex, bumpMap: tex, bumpScale: 3, roughness: 1 }));
-  patch(8000, 200, -0.6, new THREE.MeshStandardMaterial({ color: 0x4f4c48, roughness: 1 }), 340);
+  patch(10240, 320, -0.6, new THREE.MeshStandardMaterial({ color: 0x4f4c48, roughness: 1 }), 340);   // the 10 km near tile at 32 m cells
+  patch(41000, 512, -2.5, new THREE.MeshStandardMaterial({ color: 0x45423f, roughness: 1 }), 5100);   // the far tile (about 41 km) at 80 m cells: the whole crater bowl, floor and far wall
 
-  const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshStandardMaterial({ color: 0x5b5853, roughness: 1 }), ROCK_CAP);
-  const d = new THREE.Object3D(); let n = 0;
-  for (const r of buildRocks()) { d.position.set(r.x, r.y, r.z); d.rotation.set(r.rx, r.ry, 0); d.scale.set(r.s, r.sy, r.sz); d.updateMatrix(); rocks.setMatrixAt(n++, d.matrix); }
+  // rocks: shared displaced icosahedra (no two identical), each tinted per instance from grey to dusty brown,
+  // with a pitted, mottled rock texture — flat single-colour blobs read as painted balls
+  const rockGeo = new THREE.IcosahedronGeometry(1, 1);
+  {
+    const p = rockGeo.attributes.position, v = new THREE.Vector3(), seen = new Map<string, number>();
+    for (let i = 0; i < p.count; i++) {
+      v.set(p.getX(i), p.getY(i), p.getZ(i));
+      const k = `${v.x.toFixed(4)},${v.y.toFixed(4)},${v.z.toFixed(4)}`;
+      let j = seen.get(k);
+      if (j === undefined) { j = 0.82 + Math.random() * 0.36; seen.set(k, j); }   // same jitter for shared corners so faces stay welded
+      v.multiplyScalar(j); p.setXYZ(i, v.x, v.y, v.z);
+    }
+    rockGeo.computeVertexNormals();
+  }
+  const rockTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d')!;
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 256, 256);
+    for (const [s, a] of [[4, 0.25], [16, 0.2], [64, 0.12]] as const) {
+      const n = document.createElement('canvas'); n.width = n.height = s;
+      const ng = n.getContext('2d')!, id = ng.createImageData(s, s);
+      for (let i = 0; i < s * s; i++) { const v = 110 + Math.random() * 130; id.data.set([v, v * 0.985, v * 0.94, 255], i * 4); }
+      ng.putImageData(id, 0, 0); g.globalAlpha = a; g.drawImage(n, 0, 0, 256, 256);
+    }
+    g.globalAlpha = 1;
+    for (let i = 0; i < 500; i++) { g.fillStyle = `rgba(70,66,60,${0.15 + Math.random() * 0.3})`; g.beginPath(); g.arc(Math.random() * 256, Math.random() * 256, 0.5 + Math.random() * 2.5, 0, 7); g.fill(); }
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
+  })();
+  const rocks = new THREE.InstancedMesh(rockGeo, new THREE.MeshStandardMaterial({ map: rockTex, roughness: 1, metalness: 0 }), ROCK_CAP);
+  const d = new THREE.Object3D(), rc = new THREE.Color(); let n = 0;
+  for (const r of buildRocks()) {
+    d.position.set(r.x, r.y, r.z); d.rotation.set(r.rx, r.ry, 0); d.scale.set(r.s, r.sy, r.sz); d.updateMatrix();
+    rocks.setMatrixAt(n, d.matrix);
+    rc.setHSL(0.08 + Math.random() * 0.04, 0.04 + Math.random() * 0.09, 0.3 + Math.random() * 0.16);   // grey to dusty brown, never the same twice
+    rocks.setColorAt(n, rc);
+    n++;
+  }
   rocks.count = n; rocks.castShadow = rocks.receiveShadow = true; scene.add(rocks);
 
   const gy = heightAt(0, 0);
@@ -120,6 +195,7 @@ function buildWorld() {
 const sim = new Sim();
 const dir = new Director(sim);
 const storm = new Storm(scene);
+const fx = new Fx(scene, heightAt, arrayPos, { boom, hiss });
 (earth.material as THREE.MeshStandardMaterial).fog = false;
 const shakeOff = new THREE.Vector3(); let prevQuake = 0, prevLock = false, recallT = 0;
 let hab: Hab | null = null;
@@ -202,6 +278,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyT' && !e.repeat) { e.preventDefault(); crewTalk?.openText(); return; }
   if (e.code === 'KeyB' && !e.repeat) { void (async () => { if (crewTalk?.recording) { void crewTalk.toggleMic('houston'); return; } if (await comms.ensureReady()) void crewTalk?.toggleMic('houston'); })(); return; }
   if (e.code === 'KeyE') { if (rover?.hasPrompt) rover.press(); else hab?.press(); }
+  if (e.code === 'KeyF' && locked && !e.repeat) hab?.press2();
   else if (e.code === 'KeyL' && rover?.inside) rover.toggleLights();
   else if (e.code === 'KeyX' && rover?.mode === 'driving') rover.toggleParkBrake();
   else if (e.code === 'KeyR' && rover?.mode === 'driving') rover.onRadio?.();
@@ -231,6 +308,7 @@ function drawHud(az: number, el: number) {
     row('SIM CLOCK', new Date(simMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC') + row('MISSION DAY', `${day} · ${(sim.t / 24).toFixed(1)} / ${SIM.missionDays}`) +
     row('SUN EL / AZ', `${(el * 57.2958).toFixed(2)}° / ${(az * 57.2958).toFixed(0)}°`) +
     row('SUN DATA', sunLive ? 'JPL HORIZONS' : 'APPROXIMATE', sunLive ? 'ok' : 'warn') +
+    (getSite()?.craterDir ? row('CRATER INTERIOR', (() => { const c = getSite()!.craterDir!, b = ((Math.atan2(c.x, -c.z) * 180) / Math.PI + 360) % 360; return `${['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(b / 45) % 8]} ${b.toFixed(0)}°  ·  RIM CREST AT THE PAD`; })()) : '') +
     row('ARRAY', sim.sunlit ? 'SUNLIT' : 'SHADOW', sim.sunlit ? 'ok' : 'bad') +
     row('POWER GEN / LOAD', `${sim.genKw.toFixed(1)} / ${sim.loadKw.toFixed(1)} kW`, cls(sim.genKw < sim.loadKw)) +
     row('BATTERY', `${b.toFixed(1)} %`, cls(b < 25, b < 10)) +
@@ -294,9 +372,11 @@ function frame() {
   const date = new Date(simMs), s = bodyDir('sun', date), e = bodyDir('earth', date);
   sunLive = s.live; sd.set(s.x, s.y, s.z); earthDir.set(e.x, e.y, e.z); earthEl = e.el;
   const inRover = !!rover && rover.inside, inside = (hab ? hab.inHab(camera.position.x, camera.position.z) : false) || inRover;
-  ambK += ((inside ? 0.1 : 0.35) - ambK) * Math.min(1, dt * 3); amb.intensity = ambK;
-  storm.update(dt, camera.position, sim.lockdown?.storm ?? 0, !inside);
-  hab?.setShutters(storm.level);
+  ambK += ((inside ? 0.1 : 0.19) - ambK) * Math.min(1, dt * 3); amb.intensity = ambK;
+  storm.update(dt, camera.position, sim.lockdown?.storm ?? (sim.stormWarn ? 0.45 : 0), !inside);
+  fx.update(running ? dt : 0, camera.position, sim); hab && (hab.flicker = Math.min(1, fx.shake * 1.1));
+  const spR = sim.spe && sim.t >= sim.spe.arrive ? Math.min(1, sim.speRateUnshielded() / 8) : 0; ui.setRad(spR * (inside && sim.shelter ? 0.3 : 1), dt);
+  crew?.setSymptom(sim.symptom?.kind ?? null, sim.symptom?.n ?? 0);
 
   const px0 = camera.position.x, pz0 = camera.position.z;
   { const pu = crew?.takePush(); if (pu && (pu.x || pu.z) && !(hab && hab.blocked(camera.position.x + pu.x, camera.position.z + pu.z)) && !propBlocked(camera.position.x + pu.x, camera.position.z + pu.z)) { camera.position.x += pu.x; camera.position.z += pu.z; } }
@@ -332,6 +412,7 @@ function frame() {
     if (sh > 0.001) { camera.rotateX(Math.sin(t * 41) * 0.012 * sh + Math.sin(t * 17.3) * 0.01 * sh); camera.rotateZ(Math.sin(t * 29) * 0.014 * sh); camera.position.y += Math.sin(t * 53) * 0.025 * sh; }
   }
   lamp.visible = !!hab && hab.exposed && hab.suitOn;
+  player.setHeld(hab?.held ?? null); player.setSpray(!!hab?.spraying);
   player.update(dt, camera.position, yaw, vel, onGround, !!hab?.suitOn, comms.padOpen, !!hab?.exposed);
 
   sun.position.copy(camera.position).addScaledVector(sd, 600);
@@ -342,7 +423,7 @@ function frame() {
   litT += dt; hudT += dt;
   if (litT > 0.25) { litT = 0; sim.sunlit = isSunlit(arrayPos, sd); earthVisible = earthEl > 0.003 && isSunlit(dishPos, earthDir); }
   if (hudT > 0.25) { hudT = 0; drawHud(s.az, s.el); }
-  if (sim.quakeS > 0) { const a = 0.045 * Math.min(1, sim.quakeS / 3); shakeOff.set((Math.random() - 0.5) * a, (Math.random() - 0.5) * a * 0.7, (Math.random() - 0.5) * a); camera.position.add(shakeOff); }
+  if (fx.shake > 0.01) { const a = 0.16 * fx.shake; shakeOff.set((Math.random() - 0.5) * a, (Math.random() - 0.5) * a * 0.7, (Math.random() - 0.5) * a); camera.position.add(shakeOff); camera.rotation.x += (Math.random() - 0.5) * 0.035 * fx.shake; camera.rotation.z += (Math.random() - 0.5) * 0.06 * fx.shake; }
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
