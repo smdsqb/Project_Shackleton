@@ -160,7 +160,7 @@ function build(s: Spec): Rig {
   mk(new RoundedBoxGeometry(0.09 * H, 0.06 * H, 0.03 * H, 3, 0.008 * H), grey, ch, eva, 0, 0.0 * H, ez + 0.004 * H);
   const plss = mk(new RoundedBoxGeometry(0.27 * H, 0.36 * H, 0.14 * H, 3, 0.02 * H), white, ch, eva, 0, 0.06 * H, -(ez + 0.05 * H));
   mk(new RoundedBoxGeometry(0.2 * H, 0.05 * H, 0.1 * H, 3, 0.01 * H), grey, plss, eva, 0, 0.2 * H, 0);
-  patch(0.18 * H, (0.18 * H * 96) / 512, plateTexture('NASA'), plss, eva, 0, 0.04 * H, -0.072 * H, PI);
+  patch(0.18 * H, (0.18 * H * 96) / 512, plateTexture('SHACKLETON'), plss, eva, 0, 0.04 * H, -0.072 * H, PI);
 
   // ---- arms ----
   const shW = 0.118 * H * sw, shY = 0.5 * T - 0.03 * H;
