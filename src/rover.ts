@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { buildRoverModel, WHEEL_R, TRACK, AXLES, FLOOR_Y, AISLE, HATCH, RADIO, SEAT_EYE, type RoverModel } from './roverModel';
+import { buildRoverModel, WHEEL_R, TRACK, AXLES, FLOOR_Y, AISLE, HATCH, HATCH_OPEN, ANT, SEAT_EYE, type RoverModel } from './roverModel';
 import { heightAt, lineOfSight } from './terrain';
-import { rockTop, bigRocksNear } from './rocks';
+import { rockTop, bigRocksNear, ROCKS } from './rocks';
 import { beep } from './ui';
 import type { Sim } from './sim';
 
@@ -9,9 +9,9 @@ import type { Sim } from './sim';
 // Lunar physics: 1.62 m/s2 gravity means traction (and therefore braking and cornering) is weak, so everything is slow and
 // needs planning. Each wheel is on a spring and damper, boulders and drops are felt, and harsh driving damages parts that
 // then have to be repaired outside with kits from the rover.
-const CAP_KWH = 90, HOTEL_KW = 1.1, LAMP_KW = 0.4, MASS = 6500, MAX_V = 6.5, MAX_REV = 2.2, G = 1.62, MU = 0.62, WHEELBASE = 5.4;
+const CAP_KWH = 90, HOTEL_KW = 1.1, LAMP_KW = 0.4, MASS = 6500, MAX_V = 6.5, MAX_REV = 2.2, G = 1.62, MU = 0.62, WHEELBASE = 6.0;
 const CHARGE_KW = 6, CHARGE_R = 13, UHF_RANGE = 20000, KITS_MAX = 3;
-const K_SPR = 11, C_DAMP = 0.95, DROOP = 0.3, TMAX = 0.3, RHO_P = 2.6, RHO_R = 1.6, XC = (AXLES[0] + AXLES[2]) / 2;
+const K_SPR = 11, C_DAMP = 0.95, DROOP = 0.3, TMAX = 0.3, RHO_P = 3.0, RHO_R = 1.7, XC = (AXLES[0] + AXLES[2]) / 2;
 const D = THREE.MathUtils, lerp = D.lerp, clamp = D.clamp, smooth = (k: number) => k * k * (3 - 2 * k);
 export type RoverMode = 'out' | 'cabin' | 'driving';
 type Cand = { a: THREE.Vector3; reach: number; cone: number; text: string; run: () => string };
@@ -53,7 +53,7 @@ export class Rover {
   blocks(x: number, z: number) {
     if (this.mode !== 'out') return false;
     const c = Math.cos(this.heading), s = Math.sin(this.heading), dx = x - this.x, dz = z - this.z, lx = dx * c - dz * s, lz = dx * s + dz * c;
-    return lx > -5.5 && lx < 5.4 && Math.abs(lz) < 2.45;
+    return lx > -5.4 && lx < 5.8 && Math.abs(lz) < 2.6;
   }
   cameraPos(out: THREE.Vector3) {
     if (this.mode === 'driving') return this.toWorld(SEAT_EYE, out);
@@ -124,7 +124,7 @@ export class Rover {
   // ---------- radio link to the Hab ----------
   habLink() { return this.link; }
   private updateLink() {
-    this.toWorld(this.tmp.set(2.0, FLOOR_Y + 2.9, -0.7), this.ant); const hab = this.habAnt(), dist = Math.hypot(this.ant.x - hab.x, this.ant.z - hab.z);
+    this.toWorld(this.tmp.copy(ANT), this.ant); const hab = this.habAnt(), dist = Math.hypot(this.ant.x - hab.x, this.ant.z - hab.z);
     const rng = UHF_RANGE * Math.pow(this.dishHp / 100, 1.5), los = dist < 40 || lineOfSight(this.ant, hab), inRange = dist < rng;
     this.link = { dist, los, up: los && inRange && this.batteryKwh > 0 && this.dishHp > 20, reason: this.dishHp <= 20 ? 'THE COMMS DISH IS DAMAGED. REPAIR IT OUTSIDE' : !inRange ? `OUT OF UHF RANGE OF THE HAB (${(rng / 1000).toFixed(0)} KM MAX)` : !los ? 'THE HAB IS BELOW THE LOCAL HORIZON OR MASKED BY TERRAIN' : this.batteryKwh <= 0 ? 'ROVER BATTERY IS DEAD' : '' };
   }
@@ -164,6 +164,7 @@ export class Rover {
 
     this.animate(dt);
     this.linkT -= dt; if (this.linkT <= 0) { this.linkT = 0.5; this.updateLink(); }
+    if (this.inside) { this.stepMapTile(); const lt = this.trail[this.trail.length - 1]; if (!lt || Math.hypot(this.x - lt[0], this.z - lt[1]) > 4) { this.trail.push([this.x, this.z]); if (this.trail.length > 80) this.trail.shift(); } }
     this.scrT -= dt; if (this.scrT <= 0) { this.scrT = 0.2; this.drawScreens(); }
     this.warnT -= dt; if (this.warnT <= 0) { this.warnT = 0.25; this.scanTerrain(); }
     this.alarms(dt);
@@ -238,9 +239,9 @@ export class Rover {
     const nh = this.heading + yaw * dt, c = Math.cos(nh), s = Math.sin(nh), nx = this.x + c * this.speed * dt, nz = this.z - s * this.speed * dt;
     let hit: 'front' | 'rear' | 'side' | null = null; const sign = this.speed >= 0 ? 1 : -1;
     if (Math.abs(nx) > 270 || Math.abs(nz) > 270) hit = sign > 0 ? 'front' : 'rear';
-    if (!hit) for (const lx of [4.6, 2.4, 0.2, -2.0, -4.6]) { if (this.solid(nx + lx * c, nz - lx * s, 2.15)) { hit = lx > 2 ? 'front' : lx < -1.5 ? 'rear' : 'side'; break; } }
+    if (!hit) for (const lx of [5.0, 3.0, 1.0, -1.0, -3.0, -4.8]) { if (this.solid(nx + lx * c, nz - lx * s, 2.5)) { hit = lx > 2.5 ? 'front' : lx < -2.5 ? 'rear' : 'side'; break; } }
     if (!hit) for (const w of this.m.wheels) { const wx = nx + w.x * c + w.side * TRACK * s, wz = nz - w.x * s + w.side * TRACK * c; if (rockTop(wx + c * 0.5 * sign, wz - s * 0.5 * sign) > 0.74) { hit = sign > 0 ? 'front' : 'rear'; break; } }
-    if (!hit) for (const lx of [4.4, 2.2, 0, -2.2, -4.4]) for (const lat of [-1.0, 0, 1.0]) { // rocks that would strike the belly (ground clearance about 0.65 m)
+    if (!hit) for (const lx of [5.2, 3.0, 1.0, -1.0, -3.0, -4.8]) for (const lat of [-1.0, 0, 1.0]) { // rocks that would strike the belly (ground clearance about 0.65 m)
       if (rockTop(nx + c * lx * 1 + s * lat, nz - s * lx + c * lat) > 0.62) { hit = sign > 0 ? 'front' : 'rear'; break; }
     }
     if (!hit && Math.abs(this.sx) > 0.58 && Math.sign(this.sx) === Math.sign(this.speed)) hit = null, this.speed = 0, this.say('TOO STEEP · CANNOT CLIMB THIS SLOPE', 1.5);
@@ -357,11 +358,11 @@ export class Rover {
       w.hub.position.y = this.hubY[i]; w.links(this.hubY[i]); w.spin.rotation.z -= (km * dt) / WHEEL_R;
       w.steer.rotation.y = w.front ? this.steer : w.x === AXLES[2] ? -this.steer * 0.4 : 0;
       const dm = d(i); w.spin.scale.y = 1 - 0.2 * dm; w.hub.rotation.x = w.side * 0.16 * dm; w.spin.rotation.x = Math.sin(this.time * Math.abs(km) * 2.2) * 0.05 * dm * Math.min(1, Math.abs(km));
-      w.rotor.emissiveIntensity = hot * (w.front ? 1.7 : 1.2);
+      w.rotor.emissiveIntensity = hot * (w.front ? 0.55 : 0.4);
     });
     // door: fixed-rate swing so it ends exactly open or exactly shut
     this.hatchK = clamp(this.hatchK + Math.sign(this.hatchTarget - this.hatchK) * dt * 0.6, Math.min(this.hatchTarget, this.hatchK), Math.max(this.hatchTarget, this.hatchK));
-    this.m.hatch.rotation.y = -1.55 * smooth(this.hatchK); if (this.mode === 'out' && !this.cycle && this.hatchTarget === 1 && !this.nearPlayer) this.hatchTarget = 0;
+    this.m.hatch.rotation.y = HATCH_OPEN * smooth(this.hatchK); if (this.mode === 'out' && !this.cycle && this.hatchTarget === 1 && !this.nearPlayer) this.hatchTarget = 0;
     // controls follow the inputs
     const A = (a: number, b: number, k = 10) => a + (b - a) * Math.min(1, dt * k);
     this.m.stick.rotation.z = A(this.m.stick.rotation.z, -(this.thr - this.brk * 0.8) * 0.3); this.m.stick.rotation.x = A(this.m.stick.rotation.x, -this.steer * 0.9);
@@ -392,11 +393,56 @@ export class Rover {
     stepPool(this.fx, dt);
   }
 
+  // ---------- cockpit displays: DRIVE (left), NAV MAP (centre), SYSTEMS (right) ----------
+  private mapTile = { n: 72, res: 5.6, cx: 1e9, cz: 1e9, row: 0, building: false, nx: 0, nz: 0, bh: new Float32Array(72 * 72), canvas: null as HTMLCanvasElement | null };
+  private trail: [number, number][] = [];
+  /** Builds the terrain tile under the rover a few rows per frame, so driving never hitches. */
+  private stepMapTile() {
+    const t = this.mapTile, N = t.n;
+    if (!t.building) {
+      if (t.canvas && Math.hypot(this.x - t.cx, this.z - t.cz) < 60) return;
+      t.building = true; t.nx = Math.round(this.x / 20) * 20; t.nz = Math.round(this.z / 20) * 20; t.row = 0;
+    }
+    const x0 = t.nx - (N * t.res) / 2, z0 = t.nz - (N * t.res) / 2;
+    for (let k = 0; k < 6 && t.row < N; k++, t.row++) for (let i = 0; i < N; i++) t.bh[t.row * N + i] = heightAt(x0 + (i + 0.5) * t.res, z0 + (t.row + 0.5) * t.res);
+    if (t.row < N) return;
+    let lo = 1e9, hi = -1e9; for (const v of t.bh) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    const c = t.canvas ?? (t.canvas = document.createElement('canvas')); c.width = c.height = N; const g = c.getContext('2d')!, img = g.createImageData(N, N);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const hx = t.bh[j * N + Math.min(N - 1, i + 1)] - t.bh[j * N + Math.max(0, i - 1)], hz = t.bh[Math.min(N - 1, j + 1) * N + i] - t.bh[Math.max(0, j - 1) * N + i];
+      const shade = clamp(0.64 + ((-hx - hz) * 0.7 / (2 * t.res)) * 1.8, 0.18, 1.15), e = (t.bh[j * N + i] - lo) / Math.max(1, hi - lo), o = (j * N + i) * 4;
+      img.data[o] = clamp((92 + e * 78) * shade, 0, 255); img.data[o + 1] = clamp((96 + e * 70) * shade, 0, 255); img.data[o + 2] = clamp((104 + e * 58) * shade, 0, 255); img.data[o + 3] = 255;
+    }
+    g.putImageData(img, 0, 0); t.cx = t.nx; t.cz = t.nz; t.building = false;
+  }
+
+  private drawMap(s: { g: CanvasRenderingContext2D; w: number; h: number }) {
+    const g = s.g, W = s.w, Hh = s.h, t = this.mapTile, sc = 0.95, cxs = W * 0.5, cys = Hh * 0.62, th = this.heading - Math.PI / 2;
+    g.fillStyle = '#04141c'; g.fillRect(0, 0, W, Hh);
+    g.save(); g.beginPath(); g.rect(2, 22, W - 4, Hh - 25); g.clip();
+    g.translate(cxs, cys); g.rotate(th); g.scale(sc, sc); g.translate(-this.x, -this.z);
+    if (t.canvas) { g.globalAlpha = 0.95; g.drawImage(t.canvas, t.cx - (t.n * t.res) / 2, t.cz - (t.n * t.res) / 2, t.n * t.res, t.n * t.res); g.globalAlpha = 1; }
+    g.lineWidth = 1 / sc; g.strokeStyle = 'rgba(79,216,255,.4)'; for (const r of [50, 100]) { g.beginPath(); g.arc(this.x, this.z, r, 0, 7); g.stroke(); }
+    g.fillStyle = 'rgba(255,170,60,.9)'; for (const r of ROCKS) { if (r.s < 0.45 || Math.abs(r.x - this.x) > 150 || Math.abs(r.z - this.z) > 150) continue; g.beginPath(); g.arc(r.x, r.z, Math.max(r.a, 1.4), 0, 7); g.fill(); }
+    g.strokeStyle = 'rgba(126,231,135,.85)'; g.lineWidth = 2 / sc; g.beginPath(); this.trail.forEach(([x, z], i) => (i ? g.lineTo(x, z) : g.moveTo(x, z))); g.lineTo(this.x, this.z); g.stroke();
+    const hab = this.habAnt(); g.fillStyle = '#ffffff'; g.fillRect(hab.x - 7, hab.z - 7, 14, 14); g.strokeStyle = '#4fd8ff'; g.lineWidth = 2 / sc; g.strokeRect(hab.x - 10, hab.z - 10, 20, 20);
+    g.restore();
+    // rover marker, hab pointer, north marker, scale
+    g.fillStyle = '#ffb000'; g.beginPath(); g.moveTo(cxs, cys - 10); g.lineTo(cxs + 6.5, cys + 7); g.lineTo(cxs, cys + 3); g.lineTo(cxs - 6.5, cys + 7); g.closePath(); g.fill(); g.strokeStyle = '#04141c'; g.lineWidth = 1; g.stroke();
+    const dx = hab.x - this.x, dz = hab.z - this.z, c = Math.cos(th), sn = Math.sin(th), hx = (dx * c - dz * sn) * sc, hy = (dx * sn + dz * c) * sc, dist = Math.hypot(dx, dz);
+    const sx = cxs + hx, sy = cys + hy, inside = sx > 10 && sx < W - 10 && sy > 30 && sy < Hh - 10;
+    if (!inside) { const k = Math.min((W / 2 - 14) / Math.max(1e-3, Math.abs(hx)), (Hh * 0.4 - 8) / Math.max(1e-3, Math.abs(hy)), 1); g.fillStyle = '#ffffff'; g.beginPath(); g.arc(cxs + hx * k, cys + hy * k, 4, 0, 7); g.fill(); g.font = '600 9px monospace'; g.textAlign = 'center'; g.fillText(`HAB ${dist.toFixed(0)} m`, clamp(cxs + hx * k, 30, W - 30), clamp(cys + hy * k - 8, 34, Hh - 6)); }
+    g.textAlign = 'center'; g.fillStyle = '#ff7a5a'; g.font = '700 11px monospace'; g.fillText('N', clamp(cxs + sn * 86, 10, W - 10), clamp(cys - c * 70 + 4, 36, Hh - 8));
+    g.fillStyle = 'rgba(4,20,28,.85)'; g.fillRect(2, 2, W - 4, 19); g.strokeStyle = 'rgba(79,216,255,.45)'; g.lineWidth = 1; g.strokeRect(1.5, 1.5, W - 3, Hh - 3);
+    g.textAlign = 'left'; g.fillStyle = '#ffb000'; g.font = '600 11px monospace'; g.fillText('NAV MAP · HEADING UP', 8, 15); g.textAlign = 'right'; g.fillStyle = '#4fd8ff'; g.fillText(`HAB ${(dist >= 1000 ? (dist / 1000).toFixed(2) + ' km' : dist.toFixed(0) + ' m')}`, W - 8, 15);
+    g.textAlign = 'left'; g.fillStyle = 'rgba(159,179,196,.9)'; g.font = '9px monospace'; g.fillText('RINGS 50 / 100 m · ORANGE = BOULDERS · GREEN = TRACK', 8, Hh - 6);
+  }
+
   private drawScreens() {
     const [s0, s1, s2] = this.m.screens, pct = (this.batteryKwh / CAP_KWH) * 100, kmh = Math.abs(this.speed * 3.6), lim = this.speedLimit * 3.6;
     const frame = (g: CanvasRenderingContext2D, title: string, col = '#ffb000') => { g.fillStyle = '#04141c'; g.fillRect(0, 0, 256, 160); g.strokeStyle = 'rgba(79,216,255,.45)'; g.lineWidth = 1; g.strokeRect(1.5, 1.5, 253, 157); g.fillStyle = col; g.font = '600 11px monospace'; g.textAlign = 'left'; g.fillText(title, 8, 15); };
     const bar = (g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, f: number, col: string) => { g.fillStyle = 'rgba(255,255,255,.1)'; g.fillRect(x, y, w, h); g.fillStyle = col; g.fillRect(x, y, w * clamp(f, 0, 1), h); };
-    // DRIVE: speed arc with limit tick, heading, attitude, pedals
+    // DRIVE: speed arc with limit tick, heading, attitude horizon, pedals
     { const g = s0.g; frame(g, 'DRIVE'); const cx = 78, cy = 96, R = 56; g.lineWidth = 7; g.strokeStyle = 'rgba(255,255,255,.12)'; g.beginPath(); g.arc(cx, cy, R, Math.PI * 0.8, Math.PI * 2.2); g.stroke();
       g.strokeStyle = this.overspeed ? '#ff5a5a' : '#4fd8ff'; g.beginPath(); g.arc(cx, cy, R, Math.PI * 0.8, Math.PI * (0.8 + 1.4 * clamp(kmh / 28, 0, 1))); g.stroke();
       const la = Math.PI * (0.8 + 1.4 * clamp(lim / 28, 0, 1)); g.strokeStyle = '#ffb000'; g.lineWidth = 3; g.beginPath(); g.moveTo(cx + Math.cos(la) * (R - 8), cy + Math.sin(la) * (R - 8)); g.lineTo(cx + Math.cos(la) * (R + 7), cy + Math.sin(la) * (R + 7)); g.stroke();
@@ -406,17 +452,15 @@ export class Rover {
       g.strokeStyle = '#ffb000'; g.lineWidth = 2; g.beginPath(); g.moveTo(ax - 14, ay); g.lineTo(ax + 14, ay); g.stroke(); g.strokeStyle = 'rgba(79,216,255,.6)'; g.lineWidth = 1.5; g.beginPath(); g.arc(ax, ay, ar, 0, 7); g.stroke();
       g.fillStyle = '#9fb3c4'; g.font = '10px monospace'; g.fillText(`P ${D.radToDeg(this.pitch).toFixed(0)}° R ${D.radToDeg(this.roll).toFixed(0)}°`, 168, 122); g.fillText('THR', 150, 142); bar(g, 172, 134, 70, 6, Math.max(0, this.thr), '#4fd8ff'); g.fillText('BRK', 150, 154); bar(g, 172, 146, 70, 6, this.brk, '#ff7a5a'); }
     s0.t.needsUpdate = true;
-    // POWER / BRAKES
-    { const g = s1.g; frame(g, 'POWER / BRAKES'); g.textAlign = 'left'; g.fillStyle = pct < 15 ? '#ff5a5a' : '#4fd8ff'; g.font = 'bold 34px monospace'; g.fillText(`${pct.toFixed(0)}%`, 12, 54); bar(g, 12, 62, 110, 7, pct / 100, pct < 15 ? '#ff5a5a' : '#4fd8ff');
-      g.font = '11px monospace'; g.fillStyle = '#9fb3c4'; g.fillText(`LOAD ${this.drawKw.toFixed(1)} kW`, 12, 86); g.fillStyle = this.regenKw > 0.3 ? '#7ee787' : '#9fb3c4'; g.fillText(`REGEN ${this.regenKw.toFixed(1)} kW`, 12, 100); g.fillStyle = '#9fb3c4'; g.fillText(this.charging ? 'CHARGING FROM HAB' : this.lights ? 'LAMPS ON' : 'LAMPS OFF', 12, 114);
-      g.fillText('BRAKE TEMP', 138, 40); g.font = 'bold 20px monospace'; g.fillStyle = this.brakeTemp > 600 ? '#ff5a5a' : this.brakeTemp > 400 ? '#ffb000' : '#4fd8ff'; g.fillText(`${this.brakeTemp.toFixed(0)}°C`, 138, 62); bar(g, 138, 68, 106, 7, (this.brakeTemp - 20) / 700, this.brakeTemp > 600 ? '#ff5a5a' : this.brakeTemp > 400 ? '#ffb000' : '#4fd8ff');
-      g.font = '11px monospace'; g.fillStyle = this.parkBrake ? '#ff7a5a' : '#9fb3c4'; g.fillText(this.parkBrake ? 'PARK BRAKE ON' : 'PARK BRAKE OFF', 138, 92); g.fillStyle = '#9fb3c4'; g.fillText(`BRAKES ${this.brakeHp.toFixed(0)}%`, 138, 106); g.fillText(`KITS ${this.kits}/${KITS_MAX}`, 138, 120); g.fillText(`RANGE ${kmh > 0.5 ? ((this.batteryKwh / Math.max(1, this.drawKw)) * kmh).toFixed(0) : '--'} km`, 12, 134); }
-    s1.t.needsUpdate = true;
-    // WARNINGS / NAV
-    { const g = s2.g, w = this.worst; frame(g, 'ALERTS / NAV'); g.textAlign = 'left'; g.font = '11px monospace';
-      const list = this.warnings.slice(0, 4); if (!list.length) { g.fillStyle = '#7ee787'; g.fillText('NO ACTIVE ALERTS', 10, 36); } list.forEach((a, i) => { g.fillStyle = a.level === 'bad' ? '#ff5a5a' : '#ffb000'; g.fillText(`▲ ${a.text}`.slice(0, 34), 10, 36 + i * 15); });
-      g.fillStyle = '#4fd8ff'; g.fillText(`HAB ${(this.link.dist / 1000).toFixed(2)} km`, 10, 108); g.fillStyle = this.link.up ? '#4fd8ff' : '#ff5a5a'; g.fillText(this.link.up ? 'UHF UP · EARTH VIA HAB' : 'NO UHF LINK', 10, 122);
-      g.fillStyle = w.hp < 90 ? (w.hp < 40 ? '#ff5a5a' : '#ffb000') : '#7ee787'; g.fillText(w.hp < 90 ? `REPAIR: ${w.name} ${w.hp.toFixed(0)}%`.slice(0, 36) : 'ALL SYSTEMS NOMINAL', 10, 140); }
+    this.drawMap(s1); s1.t.needsUpdate = true;
+    // SYSTEMS: power, brakes, alerts, damage
+    { const g = s2.g, w = this.worst; frame(g, 'SYSTEMS'); g.textAlign = 'left'; g.fillStyle = pct < 15 ? '#ff5a5a' : '#4fd8ff'; g.font = 'bold 26px monospace'; g.fillText(`${pct.toFixed(0)}%`, 10, 44); bar(g, 10, 50, 84, 6, pct / 100, pct < 15 ? '#ff5a5a' : '#4fd8ff');
+      g.font = '10px monospace'; g.fillStyle = '#9fb3c4'; g.fillText(`LOAD ${this.drawKw.toFixed(1)} kW`, 10, 70); g.fillStyle = this.regenKw > 0.3 ? '#7ee787' : '#9fb3c4'; g.fillText(`REGEN ${this.regenKw.toFixed(1)} kW`, 10, 82); g.fillStyle = '#9fb3c4'; g.fillText(this.charging ? 'CHARGING' : this.lights ? 'LAMPS ON' : 'LAMPS OFF', 10, 94);
+      g.fillText('BRAKE', 138, 30); g.font = 'bold 18px monospace'; g.fillStyle = this.brakeTemp > 600 ? '#ff5a5a' : this.brakeTemp > 400 ? '#ffb000' : '#4fd8ff'; g.fillText(`${this.brakeTemp.toFixed(0)}°C`, 138, 50); bar(g, 138, 55, 108, 6, (this.brakeTemp - 20) / 700, this.brakeTemp > 600 ? '#ff5a5a' : this.brakeTemp > 400 ? '#ffb000' : '#4fd8ff');
+      g.font = '10px monospace'; g.fillStyle = this.parkBrake ? '#ff7a5a' : '#9fb3c4'; g.fillText(this.parkBrake ? 'PARK BRAKE ON' : 'PARK BRAKE OFF', 138, 76); g.fillStyle = '#9fb3c4'; g.fillText(`KITS ${this.kits}/${KITS_MAX}`, 138, 90);
+      g.strokeStyle = 'rgba(79,216,255,.25)'; g.beginPath(); g.moveTo(8, 100); g.lineTo(248, 100); g.stroke();
+      const list = this.warnings.slice(0, 2); if (!list.length) { g.fillStyle = '#7ee787'; g.fillText('NO ACTIVE ALERTS', 10, 114); } list.forEach((a, i) => { g.fillStyle = a.level === 'bad' ? '#ff5a5a' : '#ffb000'; g.fillText(`▲ ${a.text}`.slice(0, 38), 10, 114 + i * 12); });
+      g.fillStyle = w.hp < 90 ? (w.hp < 40 ? '#ff5a5a' : '#ffb000') : '#7ee787'; g.fillText(w.hp < 90 ? `REPAIR: ${w.name} ${w.hp.toFixed(0)}%`.slice(0, 40) : 'ALL SYSTEMS NOMINAL', 10, 150); }
     s2.t.needsUpdate = true;
     const g3 = this.m.radioScr.g; g3.fillStyle = '#04141c'; g3.fillRect(0, 0, 256, 160); g3.strokeStyle = 'rgba(79,216,255,.45)'; g3.lineWidth = 1; g3.strokeRect(1.5, 1.5, 253, 157);
     g3.textAlign = 'left'; g3.fillStyle = '#ffb000'; g3.font = '600 11px monospace'; g3.fillText('ROVER RADIO', 8, 15); g3.font = '14px monospace'; g3.fillStyle = this.link.up ? '#4fd8ff' : '#ff5a5a'; g3.fillText(this.link.up ? 'UHF  HAB  LINKED' : 'UHF  NO LINK', 10, 48);
