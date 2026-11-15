@@ -130,3 +130,10 @@ No keys? The crew still reply from a built-in fallback and the browser's own spe
 - **Direct orders are immediate:** the named (or nearest) person acknowledges *and moves in the same instant*, talking as they go. The prompt forbids refusals and a plain-language intent parser backs up the model so an order is never dropped. Orders beat a shift change; only a shelter alert outranks them, and an airlock cycle already in progress is finished at a run.
 - **Bump physics:** you and each crew member are soft discs. Walking into someone shoves both of you, they stumble, look round and say something (Groq, with canned fallbacks). Standing next to someone is not a bump; sleepers and people in the other environment are never bumped.
 - **Polo fix:** sleeves were narrower than the shoulder under them, so skin poked through. Sleeves are now wider, hemmed, and the polo/trouser seam no longer z-fights.
+
+### Crew chat v3: banter, real repair orders, Houston by voice
+
+- **Orders really happen:** "patch the breach", "fix the solar array", "put out the fire", etc. start the game's real repair job (`sim.startJob`, dropping the current job) and send the addressed crew member (plus a buddy for EVA jobs) to do it, who then report back when the sim finishes it. If a job isn't possible the crew say why. Orders were previously blocked by any alert; now only going *outside* is refused during an alert.
+- **Live base status:** every crew prompt includes power, air, cabin, dust, alerts and which jobs are possible right now, so they talk about real problems.
+- **They talk to each other and to you:** ambient banter scenes (Groq-written, spoken in 3D, they face each other), crew starting conversations, quips from a third crew member, a funnier persona per person with running gags. After a question your mic opens by itself (needs mic permission already granted). Toggles in the T panel: voice replies, ambient chatter, hands-free replies.
+- **Houston by voice:** press **B** (or the MIC button on the suit pad), or start a sentence with "Houston". It goes through the same STT as the crew, then through the comms pad, and Houston answers in the radio voice as before.
