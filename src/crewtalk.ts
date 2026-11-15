@@ -88,15 +88,15 @@ export function parseIntent(text: string): CrewAction | null {
   return null;
 }
 const ACK: Record<string, string[]> = {
-  come: ['On my way, Commander.', 'Coming right now.', 'Be right there.'], follow: ['Right behind you.', 'Lead the way, Commander.'], stop: ['Holding right here.', 'Not moving a muscle.'],
-  goto: ['Heading there now.', 'On it, moving.', 'Going, Commander.'], task: ['On it, doing it now.', 'Consider it started.', 'Yes, Commander, starting now.'], emote: ['Ha, you got it.', 'Sure thing!'],
-  job: ['On it, starting the repair now.', 'Suiting up, consider it handled.', 'Already moving, Commander.'],
+  come: ['On my way, Commander.', 'Coming right now.', 'Be right there.', 'Moving, give me a second.'], follow: ['Right behind you.', 'Lead the way, Commander.', 'With you.'], stop: ['Holding right here.', 'Not moving a muscle.', 'Stopping.'],
+  goto: ['Heading there now.', 'On it, moving.', 'Going, Commander.', 'En route.'], task: ['On it, doing it now.', 'Consider it started.', 'Yes, Commander, starting now.', 'Getting to it.'], emote: ['Ha, you got it.', 'Sure thing!', 'Oh, watch this.'],
+  job: ['On it, starting the repair now.', 'Suiting up, consider it handled.', 'Already moving, Commander.', 'Grabbing the tools.'],
 };
 const localReply = (text: string, bot: Bot): Reply => {
   const a = parseIntent(text), f = bot.spec.first;
   if (a && (isOrder(text) || a.type === 'emote' || a.type === 'job')) return { say: pick(ACK[a.type] ?? ACK.goto), do: a };
   if (/\b(hi|hello|hey|morning|evening|afternoon|yo)\b/i.test(text)) return { say: `Hey Commander, ${f} here.`, do: { type: 'emote', emote: 'wave' } };
-  return { say: pick(['Copy that, Commander.', 'Yep, got you.', 'Sure thing.']), do: { type: 'none' } };
+  return { say: pick(['Copy that, Commander.', 'Yep, got you.', 'Sure thing.', 'Roger that.', 'Understood.', 'Makes sense to me.']), do: { type: 'none' } };
 };
 const localGreeting = (hour: number, bot: Bot): Reply => {
   const part = hour >= 5 && hour < 12 ? 'Morning' : hour >= 12 && hour < 17 ? 'Afternoon' : hour >= 17 && hour < 21 ? 'Evening' : 'Late night';
@@ -341,10 +341,15 @@ export class CrewTalk {
   private async runScene() {
     const p = this.camera.position, free = this.crew.bots.filter((b) => b.sleepStage === 0 && !b.convo && b.lk === null && !b.emote);
     const near = this.crew.nearest(p, true), nearOk = !!near && near.d < 8 && !near.bot.convo && near.bot.sleepStage === 0, now = performance.now();
+    // crew-to-crew chat is room noise inside the pressure hull, not a radio show: once the Commander is outside — on the
+    // surface or away in the rover — they are simply not on that channel. The crew keep talking to each other in the
+    // hab; nothing of it is voiced or captioned to the player until they are back inside with them. (A crew member who
+    // walks up to the Commander outside, or reports a finished repair, is still a deliberate call and stays.)
+    const inHull = !this.crew.playerOutside(p);
     this.sceneBusy = true; this.sceneAbort = false;
     try {
       if (nearOk && now - this.lastInitiate > 45000 && (free.length < 2 || Math.random() < 0.3)) { this.lastInitiate = now; await this.initiate(near!.bot); }   // a crew member starts talking to YOU at most every 45 s, so most scenes are crew-to-crew banter
-      else if (free.length >= 2) await this.crewBanter(free, nearOk);
+      else if (free.length >= 2 && inHull) await this.crewBanter(free, nearOk);
     } finally { this.sceneBusy = false; for (const b of this.crew.bots) b.chat = null; }
   }
   /** a crew member walks up on their own and starts talking to you */
@@ -363,7 +368,7 @@ export class CrewTalk {
     const toPlayer = nearPlayer && Math.random() < 0.4 && Math.hypot(p.x - o.x, p.z - o.z) < 9;
     let lines: { who: string; say: string; emote?: string }[] = [], ask = false;
     try {
-      const r = await fetch('/api/crew', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(18000), body: JSON.stringify({ kind: 'banter', who: a.spec.name, other: o.spec.name, ctxA: a.ctx(), ctxB: o.ctx(), world: this.host.world(), jobs: this.host.jobs(), recent: this.recent.slice(-8), toPlayer, ...this.clock() }) });
+      const r = await fetch('/api/crew', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(22000), body: JSON.stringify({ kind: 'banter', who: a.spec.name, other: o.spec.name, ctxA: a.ctx(), ctxB: o.ctx(), world: this.host.world(), jobs: this.host.jobs(), recent: this.recent.slice(-12), toPlayer, ...this.clock() }) });
       if (r.ok) { const j = (await r.json()) as { lines?: typeof lines; ask?: boolean }; lines = j.lines ?? []; ask = j.ask === true; }
     } catch { lines = []; }
     if (lines.length < 2 || this.sceneAbort || this.busy || this.recording) return;
@@ -374,7 +379,7 @@ export class CrewTalk {
       if (this.sceneAbort) break;
       const l = lines[i], sp = bots.find((b) => b.spec.name === l.who) ?? a; last = sp;
       if (l.emote) sp.perform({ type: 'emote', emote: l.emote }, p);
-      this.recent.push(`${sp.spec.first}: ${l.say}`); this.recent = this.recent.slice(-10);
+      this.recent.push(`${sp.spec.first}: ${l.say}`); this.recent = this.recent.slice(-14);
       await this.speak(sp, l.say, this.radioTo(sp), false, pre[i]);
       await sleep(rnd(150, 450));
     }

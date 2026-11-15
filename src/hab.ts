@@ -67,7 +67,7 @@ let aoTex: THREE.CanvasTexture | null = null;
 function aoBlob(w: number, d: number) {
   if (!aoTex) {
     const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d')!;
-    const gr = g.createRadialGradient(64, 64, 8, 64, 64, 64); gr.addColorStop(0, 'rgba(0,0,0,.55)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    const gr = g.createRadialGradient(64, 64, 8, 64, 64, 64); gr.addColorStop(0, 'rgba(0,0,0,.38)'); gr.addColorStop(1, 'rgba(0,0,0,0)');   // gentle enough not to read as a stain on the decking; real occlusion under furniture is spread over 8 lamps
     g.fillStyle = gr; g.fillRect(0, 0, 128, 128); aoTex = new THREE.CanvasTexture(c);
   }
   const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: aoTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
@@ -157,8 +157,10 @@ export class Hab {
     mesh(new THREE.TorusGeometry(1.2 * K, 0.04, 12, 48).rotateX(P / 2), glowM(0xffe2bd, 0.22), 0, 3.75, 0);
     // lighting plan: cool general light, cooler task light over the lab, warm light at the galley and bunks, a cyan wash at the comms desk
     const lamp = (c: number, i: number, dist: number, x: number, y: number, z: number, sh = false) => { const l = new THREE.PointLight(c, i, dist, dist === 0 ? 1.4 : 2); if (sh) { l.castShadow = true; l.shadow.mapSize.set(512, 512); l.shadow.camera.far = 14; l.shadow.bias = -0.002; l.shadow.normalBias = 0.03; l.shadow.radius = 3; } l.position.set(x, y, z); this.root.add(l); this.lights.push({ l, base: i, color: c }); };
-    // one shadow-casting lamp in the ring: a cube shadow map is six depth passes, so each caster costs six scene renders
-    for (let i = 0; i < 8; i++) { const a = ((i + 0.5) * P) / 4; lamp(0xf1f4fa, 4.5, 0, 3.9 * K / 1.3 * Math.cos(a), 3.3, 3.9 * K / 1.3 * Math.sin(a), i === 0); }   // even LED ring in the ceiling: no hot spot under the player
+    // interior cube shadows are opt-in (?quality=ultra): a cube map is SIX depth passes of everything within 14 m,
+    // refreshed every other frame — by far the biggest constant frame cost on weak GPUs, for a subtle soft-shadow gain
+    const ultra = typeof location !== 'undefined' && /[?&]quality=ultra\b/.test(location.search);
+    for (let i = 0; i < 8; i++) { const a = ((i + 0.5) * P) / 4; lamp(0xf1f4fa, 4.5, 0, 3.9 * K / 1.3 * Math.cos(a), 3.3, 3.9 * K / 1.3 * Math.sin(a), i === 0 && ultra); }   // even LED ring in the ceiling: no hot spot under the player
     for (const x of [-2, 0, 2]) lamp(0xdfe9f7, 3, 5, x * K, 2.5, -1.6 * K);   // task lights over the benches
     lamp(0xffe2bd, 3.5, 5, 0, 2.5, GZ);                                          // galley
 

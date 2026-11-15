@@ -210,7 +210,11 @@ export function grainTexture() {
   grainT = new THREE.CanvasTexture(c); grainT.wrapS = grainT.wrapT = THREE.RepeatWrapping; grainT.colorSpace = THREE.NoColorSpace; grainT.anisotropy = 4; return grainT;
 }
 
-/** Non-slip composite decking: 2 x 2 tiles per image (0.6 m each), seams, studs, screws, scuffs, with a matching bump map. One image repeats every 1.2 m. */
+/** Non-slip composite decking: 2 x 2 tiles per image (0.6 m each), seams, studs, screws, scuffs, with a matching bump map. One image repeats every 1.2 m.
+ * Distance budget (S = 1024 px per 1.2 m, 1 px = 1.17 mm): the grout is ~2.5 cm wide so the tile grid still
+ * resolves 1 px+ at 8 m, and the studs are a random scatter, not a lattice — any regular sub-centimetre grid
+ * moires against the screen raster and reads, a few metres out, as a mismatched fake grid. Fine detail may
+ * fade with distance, but the grid, the screws and the scuffs persist, so near and far read as ONE floor. */
 export function floorTextures(repeat: number) {
   const S = 1024, map = cv(S, S), bump = cv(S, S), g = map.getContext('2d')!, b = bump.getContext('2d')!, r = seeded(5);
   b.fillStyle = '#808080'; b.fillRect(0, 0, S, S);
@@ -218,16 +222,39 @@ export function floorTextures(repeat: number) {
     const v = 112; g.fillStyle = `rgb(${v},${v + 2},${v + 6})`; g.fillRect(tx * 512, ty * 512, 512, 512);   // every tile exactly the same base value: any per-tile variance reads as a lighting mismatch under the ceiling ring
   }
   const id = g.getImageData(0, 0, S, S);
-  for (let i = 0; i < S * S; i++) { const n = (r() - 0.5) * 14; id.data[i * 4] += n; id.data[i * 4 + 1] += n; id.data[i * 4 + 2] += n; }
+  for (let i = 0; i < S * S; i++) { const n = (r() - 0.5) * 9; id.data[i * 4] += n; id.data[i * 4 + 1] += n; id.data[i * 4 + 2] += n; }
   g.putImageData(id, 0, 0);
-  for (let y = 10; y < S; y += 16) for (let x = 10 + ((y / 16) % 2) * 8; x < S; x += 16) { g.fillStyle = 'rgba(0,0,0,.16)'; g.fillRect(x, y, 3, 3); b.fillStyle = '#b0b0b0'; b.fillRect(x, y, 3, 3); }   // anti-slip studs
-  for (let i = 0; i < 70; i++) { g.strokeStyle = r() > 0.5 ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.07)'; g.lineWidth = 1 + r() * 2; g.beginPath(); const x = r() * S, y = r() * S; g.moveTo(x, y); g.lineTo(x + (r() - 0.5) * 90, y + (r() - 0.5) * 90); g.stroke(); }
-  for (const k of [0, 512]) {
-    g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(k - 2, 0, 5, S); g.fillRect(0, k - 2, S, 5); g.fillStyle = 'rgba(255,255,255,.07)'; g.fillRect(k + 3, 0, 1, S); g.fillRect(0, k + 3, S, 1);
-    b.fillStyle = '#303030'; b.fillRect(k - 2, 0, 5, S); b.fillRect(0, k - 2, S, 5);
+  // grout: 21 px (2.5 cm) so the seam lines are still one pixel-plus wide from across the room. Stamped at
+  // both k and k+S so the line that crosses the image border wraps seamlessly in the repeating texture.
+  for (const k of [0, 512]) for (const w of [k, k + S]) {
+    g.fillStyle = 'rgba(0,0,0,.5)'; g.fillRect(w - 10, 0, 21, S); g.fillRect(0, w - 10, S, 21);
+    g.fillStyle = 'rgba(255,255,255,.09)'; g.fillRect(w + 12, 0, 2, S); g.fillRect(0, w + 12, S, 2);   // worn-edge sheen on one side of every seam
+    b.fillStyle = '#484848'; b.fillRect(w - 12, 0, 24, S); b.fillRect(0, w - 12, S, 24);
+    b.fillStyle = '#2a2a2a'; b.fillRect(w - 8, 0, 16, S); b.fillRect(0, w - 8, S, 16);
+    b.fillStyle = '#989898'; b.fillRect(w - 12, 0, 3, S); b.fillRect(0, w - 12, S, 3);                 // groove lip on the light side
   }
-  for (const [x, y] of [[0, 0], [512, 0], [0, 512], [512, 512], [256, 0], [256, 512], [0, 256], [512, 256]]) for (const [dx, dy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) { const px = (x + dx * 14 + S) % S, py = (y + dy * 14 + S) % S; g.fillStyle = 'rgba(30,32,36,.7)'; g.beginPath(); g.arc(px, py, 4, 0, 7); g.fill(); g.fillStyle = 'rgba(255,255,255,.25)'; g.beginPath(); g.arc(px - 1, py - 1, 1.3, 0, 7); g.fill(); }
+  // chamfered tile edge: a 7 px bevel just inside each seam, lit from above-left, shaded below-right
+  for (let ty = 0; ty < 2; ty++) for (let tx = 0; tx < 2; tx++) {
+    const X = tx * 512, Y = ty * 512;
+    g.fillStyle = 'rgba(255,255,255,.06)'; g.fillRect(X + 13, Y + 13, 474, 7); g.fillRect(X + 13, Y + 13, 7, 474);
+    g.fillStyle = 'rgba(0,0,0,.07)'; g.fillRect(X + 13, Y + 480, 474, 7); g.fillRect(X + 480, Y + 13, 7, 474);
+    b.fillStyle = '#8c8c8c'; b.fillRect(X + 13, Y + 13, 474, 7); b.fillRect(X + 13, Y + 13, 7, 474);
+    b.fillStyle = '#747474'; b.fillRect(X + 13, Y + 480, 474, 7); b.fillRect(X + 480, Y + 13, 7, 474);
+  }
+  // anti-slip studs: random scatter inside each tile (never a regular lattice — that moires), faint in the
+  // albedo, raised in the bump. Sub-centimetre detail is allowed to fade out at range; it must not alias.
+  for (let ty = 0; ty < 2; ty++) for (let tx = 0; tx < 2; tx++) {
+    const X = tx * 512, Y = ty * 512;
+    for (let i = 0; i < 230; i++) {
+      const x = X + 26 + r() * (512 - 52), y = Y + 26 + r() * (512 - 52), s = 3.6 + r() * 1.6;
+      g.fillStyle = 'rgba(0,0,0,.11)'; g.fillRect(x - s / 2, y - s / 2, s, s);
+      b.fillStyle = '#b8b8b8'; b.fillRect(x - s / 2, y - s / 2, s, s);
+    }
+  }
+  for (let i = 0; i < 90; i++) { g.strokeStyle = r() > 0.5 ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.07)'; g.lineWidth = 1 + r() * 2.4; const x = r() * S, y = r() * S, dx = (r() - 0.5) * 160, dy = (r() - 0.5) * 160; wrap9(g, S, (ox, oy) => { g.beginPath(); g.moveTo(x + ox, y + oy); g.lineTo(x + ox + dx, y + oy + dy); g.stroke(); }); }
+  for (const [x, y] of [[0, 0], [512, 0], [0, 512], [512, 512], [256, 0], [256, 512], [0, 256], [512, 256]]) for (const [dx, dy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) { const px = (x + dx * 17 + S) % S, py = (y + dy * 17 + S) % S; g.fillStyle = 'rgba(30,32,36,.72)'; g.beginPath(); g.arc(px, py, 5, 0, 7); g.fill(); g.fillStyle = 'rgba(255,255,255,.25)'; g.beginPath(); g.arc(px - 1.2, py - 1.2, 1.6, 0, 7); g.fill(); b.fillStyle = '#9a9a9a'; b.beginPath(); b.arc(px, py, 5, 0, 7); b.fill(); }
   const m = finish(map, true), bm = finish(bump, true); bm.colorSpace = THREE.NoColorSpace; m.repeat.set(repeat, repeat); bm.repeat.set(repeat, repeat);
+  m.anisotropy = bm.anisotropy = 16;   // the floor is the one surface seen at a grazing angle from every corner: max anisotropy keeps the grid crisp to the far wall
   return { map: m, bump: bm };
 }
 

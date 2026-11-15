@@ -21,8 +21,11 @@ inject();
 
 const MISSION_DAY0 = 214, EYE = 1.7, G = 1.62;
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// a lost WebGL context (heavy GPU load while switching tabs/windows) used to leave the page frozen for good:
+// acknowledge the loss and reload cleanly instead of spinning dead frames forever
+renderer.domElement.addEventListener('webglcontextlost', (e) => { e.preventDefault(); console.warn('[gl] context lost, reloading the outpost'); window.setTimeout(() => location.reload(), 1500); }, false);
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;   // the sun is a point source in vacuum: shadows are hard-edged, not soft studio blobs
@@ -72,7 +75,7 @@ scene.add(amb);
 let ambK = 0.19;
 const sun = new THREE.DirectionalLight(0xfff4e6, 4.0);
 sun.castShadow = true;
-sun.shadow.mapSize.set(4096, 4096);
+sun.shadow.mapSize.set(2048, 2048);   // 2048 over the ±150 m box still resolves hab and rover edges; 4096 cost 4x the fill for nothing the eye saw
 Object.assign(sun.shadow.camera, { left: -150, right: 150, top: 150, bottom: -150, near: 1, far: 1400 });
 sun.shadow.bias = -0.0004;
 scene.add(sun, sun.target);
@@ -109,10 +112,11 @@ function regolithCanvas() {
   }
   return c;
 }
-/** one shared regolith canvas so every tile samples the SAME noise: the whole floor reads as one continuous surface */
-function regolithTexture(c: HTMLCanvasElement, repeat: number) {
+/** one shared regolith canvas so every tile samples the SAME noise: the whole floor reads as one continuous surface.
+ *  aniso scales with the tile: the near floor is seen at grazing angles and needs it, the distant rings do not. */
+function regolithTexture(c: HTMLCanvasElement, repeat: number, aniso: number) {
   const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat, repeat); t.anisotropy = renderer.capabilities.getMaxAnisotropy(); t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat, repeat); t.anisotropy = Math.min(aniso, renderer.capabilities.getMaxAnisotropy()); t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
 
@@ -137,13 +141,16 @@ function buildWorld() {
   // patch size, so the near tile, the 10 km ring and the 41 km far tile light up as one continuous floor. The tile edges
   // used to read as a lighting mismatch: flat dark untextured rings beside a bright textured tile.
   const regCanvas = regolithCanvas();
-  const tileMat = (repeat: number) => {
-    const t = regolithTexture(regCanvas, repeat);
+  const tileMat = (repeat: number, aniso: number) => {
+    const t = regolithTexture(regCanvas, repeat, aniso);
     return new THREE.MeshStandardMaterial({ color: 0x9a968f, map: t, bumpMap: t, bumpScale: 3, roughness: 1 });
   };
-  patch(700, 600, 0, tileMat(175));   // the near tile: 4 m texture period
-  patch(10240, 320, -0.15, tileMat(2560), 340);   // the 10 km near tile at 32 m cells, same 4 m texture period; only a 15 cm tuck under the near tile so there is no z-fight in the overlap and no visible step at the seam
-  patch(41000, 512, -0.35, tileMat(2050), 5100);   // the far tile (about 41 km) at 80 m cells: the whole crater bowl, floor and far wall; coarser 20 m texture period so it does not alias at that distance
+  // cell sizes are 2 m / 46 m / 128 m: the LOLA data itself is 5 m/px near and 20 m/px far, so finer tessellation bought
+  // nothing but vertex cost. 1.45M triangles of floor became about 0.55M, and the distant rings stopped sampling a
+  // 16x-aniso bump map across half the screen.
+  patch(700, 352, 0, tileMat(175, 16));   // the near tile: 2 m cells, 4 m texture period
+  patch(10240, 224, -0.15, tileMat(2560, 4), 340);   // the 10 km near tile at 46 m cells, same 4 m texture period; only a 15 cm tuck under the near tile so there is no z-fight in the overlap and no visible step at the seam
+  patch(41000, 320, -0.35, tileMat(2050, 2), 5100);   // the far tile (about 41 km) at 128 m cells: the whole crater bowl, floor and far wall; coarser 20 m texture period so it does not alias at that distance
 
   // rocks: shared displaced icosahedra (no two identical), each tinted per instance from grey to dusty brown,
   // with a pitted, mottled rock texture — flat single-colour blobs read as painted balls
@@ -201,8 +208,8 @@ function buildWorld() {
   rover = new Rover(scene, (x, z, r) => (hab ? hab.solid(x, z, r) : false) || propHit(x, z, r), () => dishPos);
   rover.onRadio = () => openComms('rover');
   camera.position.y = heightAt(camera.position.x, camera.position.z) + EYE;
-  // ULTRA by default. Add ?quality=high to the address to drop the interior light shadows if the frame rate suffers.
-  if (/[?&]quality=high\b/.test(location.search)) scene.traverse((o) => { if ((o as THREE.PointLight).isPointLight) o.castShadow = false; });
+  // The interior point-light cube shadow (six depth passes of everything within 14 m, every other frame) is now opt-in
+  // from hab.ts with ?quality=ultra: it was the single biggest constant frame cost on weak GPUs.
 }
 
 // ---------- sim ----------
@@ -271,12 +278,21 @@ const comms = new Comms({
 let yaw = -Math.PI / 2, pitch = 0, vy = 0, onGround = true, locked = false;
 const keys = new Set<string>();
 const intro = document.getElementById('intro')!, enter = document.getElementById('enter') as HTMLButtonElement;
-enter.addEventListener('click', () => { started = true; ensureAudio(); window.setTimeout(() => void crewTalk?.greet(), 3500); renderer.domElement.requestPointerLock(); intro.classList.add('leaving');  window.setTimeout(() => { if (intro.classList.contains('leaving')) intro.style.display = 'none'; }, 1300); });   // hide the intro fully once it has faded: its CSS star animation keeps the compositor busy otherwise
+/** show the intro/pause overlay. It is hidden with display:none after the first fade (its star animation keeps the
+ *  compositor busy), so bringing it back has to clear that inline style too — otherwise an alt-tab / tab switch that
+ *  dropped pointer lock left the game with no RESUME screen at all: "stuck, does not recover". */
+const showIntro = () => { intro.style.display = ''; intro.classList.remove('leaving'); };
+const hideIntro = () => { intro.classList.add('leaving'); window.setTimeout(() => { if (intro.classList.contains('leaving')) intro.style.display = 'none'; }, 1300); };
+enter.addEventListener('click', () => { started = true; ensureAudio(); window.setTimeout(() => void crewTalk?.greet(), 3500); renderer.domElement.requestPointerLock(); hideIntro(); });
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
-  if (!locked && !comms.isOpen && !ui.isTabletOpen) { enter.textContent = 'RESUME'; intro.classList.remove('leaving'); keys.clear(); }
+  if (locked) hideIntro();
+  else if (!comms.isOpen && !ui.isTabletOpen) { enter.textContent = 'RESUME'; showIntro(); keys.clear(); }
 });
-renderer.domElement.addEventListener('click', () => { if (!locked && !comms.isOpen && !ui.isTabletOpen && intro.classList.contains('leaving')) renderer.domElement.requestPointerLock(); });
+renderer.domElement.addEventListener('click', () => { if (!locked && !comms.isOpen && !ui.isTabletOpen) renderer.domElement.requestPointerLock(); });
+// browsers rate-limit re-locking right after an exit (e.g. closing the comms console with Tab): when the automatic
+// relock is refused, fall back to the pause screen instead of leaving an unlocked game with no way back in
+document.addEventListener('pointerlockerror', () => { if (!locked && !comms.isOpen && !ui.isTabletOpen) { enter.textContent = 'RESUME'; showIntro(); } });
 function openComms(mode: 'hab' | 'rover' | 'suit' = 'suit', target: 'houston' | 'crew' = 'houston', commMode: 'voice' | 'text' = 'voice') { keys.clear(); document.exitPointerLock(); comms.open(mode, target, mode === 'hab' && target === 'houston' ? 'text' : commMode); }
 addEventListener('mousemove', (e) => { if (!locked) return; yaw -= e.movementX * 0.0022; pitch = Math.max(-1.5, Math.min(1.5, pitch - e.movementY * 0.0022)); });
 addEventListener('keydown', (e) => {
@@ -333,11 +349,17 @@ function clockRate() { const slow = dir.active || hab?.busy || hab?.suitOn || si
 // ---------- loop ----------
 const clock = new THREE.Clock();
 let litT = 0, bobT = 0, frameN = 0;
-// adaptive resolution: the render scale floats between 1.0 and the device cap, so a weak GPU sheds pixels instead of frames
+// adaptive resolution: the render scale floats between 0.75 and the device cap, so a weak GPU sheds pixels instead of frames
 const prCap = renderer.getPixelRatio();
-let pr = Math.min(prCap, 1.5), msAvg = 16, prT = 0;   // start at 1.5x instead of the full cap: the first seconds stay smooth, and it climbs if the GPU has headroom
+let pr = Math.min(prCap, 1), msAvg = 16, prT = 0;   // start at 1x: a weak GPU gets its first seconds smooth, a strong one climbs to its cap
 const fwd = new THREE.Vector3(), rgt = new THREE.Vector3(), mv = new THREE.Vector3(), sd = new THREE.Vector3();
+/** the frame body. frame() schedules the next tick FIRST and wraps this in try/catch, so no single exception
+ *  (a lost GL context, a NaN, anything) can ever stop the loop for good: the game recovers on the next tick. */
 function frame() {
+  requestAnimationFrame(frame);
+  try { stepFrame(); } catch (err) { console.error('[frame]', err); }
+}
+function stepFrame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   frameN++;
   renderer.shadowMap.needsUpdate = frameN % 2 === 0;   // half-rate shadows: the whole depth-pass load (sun + interior cube maps + helmet lamp) costs half
@@ -426,22 +448,21 @@ function frame() {
   sun.position.copy(camera.position).addScaledVector(sd, 600);
   sun.target.position.copy(camera.position);
   sunDisc.position.copy(camera.position).addScaledVector(sd, 3000);
-  earth.position.copy(camera.position).add(new THREE.Vector3(e.x, e.y, e.z).multiplyScalar(3000));
+  earth.position.copy(camera.position).addScaledVector(earthDir, 3000);
 
   litT += dt;
   if (started) {   // steer the render scale toward ~50-75 fps; touch the drawing buffer only when the bucket actually changes
     msAvg += (dt * 1000 - msAvg) * Math.min(1, dt * 0.75); prT += dt;
-    if (prT > 2) {
+    if (prT > 1) {
       prT = 0;
-      const want = msAvg > 20.5 ? pr - 0.25 : msAvg < 13.5 ? pr + 0.25 : pr;
-      const np = Math.max(1, Math.min(prCap, want));
+      const want = msAvg > 21 ? pr - 0.25 : msAvg < 13.5 ? pr + 0.25 : pr;
+      const np = Math.max(0.75, Math.min(prCap, want));
       if (np !== pr) { pr = np; renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight); }
     }
   }
   if (litT > 0.25) { litT = 0; sim.sunlit = isSunlit(arrayPos, sd); earthVisible = earthEl > 0.003 && isSunlit(dishPos, earthDir); }
   if (fx.shake > 0.01) { const a = 0.16 * fx.shake; shakeOff.set((Math.random() - 0.5) * a, (Math.random() - 0.5) * a * 0.7, (Math.random() - 0.5) * a); camera.position.add(shakeOff); camera.rotation.x += (Math.random() - 0.5) * 0.035 * fx.shake; camera.rotation.z += (Math.random() - 0.5) * 0.06 * fx.shake; }
   renderer.render(scene, camera);
-  requestAnimationFrame(frame);
 }
 
 // ---------- boot ----------

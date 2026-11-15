@@ -273,7 +273,9 @@ export function buildRoverModel() {
     8: { q: [P[4], P[8], P[11], P[7]], polys: [[[.08, .92], [.58, .92], [.3, .1]], [[.66, .9], [.94, .78], [.94, .22], [.38, .1]]], tint: ['b', 'b'], r: 0.14 },
     9: { q: [P[5], P[9], P[10], P[6]], polys: [[[.08, .92], [.58, .92], [.3, .1]], [[.66, .9], [.94, .78], [.94, .22], [.38, .1]]], tint: ['b', 'b'], r: 0.14 },
     3: { q: [P[0], P[4], P[7], P[3]], polys: [[[.136, .096], [.864, .096], [.864, .904], [.136, .904]]], tint: [], r: 0.25, opening: true },
-    4: { q: [P[1], P[5], P[6], P[2]], polys: [[[.23, .62], [.23, .86], [.58, .86], [.77, .74], [.77, .62]]], tint: ['b'], r: 0.07 },
+    // starboard side: two big clear panes at seated-eye height, mirroring the driver-side door glass — the whole
+    // panel used to be one opaque slab with a tiny skylight near the roof
+    4: { q: [P[1], P[5], P[6], P[2]], polys: [[[.14, .28], [.14, .88], [.48, .88], [.48, .28]], [[.56, .28], [.56, .88], [.9, .88], [.9, .28]]], tint: ['b', 'b'], r: 0.09 },
   };
   const cabG = new THREE.Group(); root.add(cabG);
   const windows: { pts: THREE.Vector3[]; b: Basis; face: number; idx: number }[] = [];
@@ -499,7 +501,7 @@ export function buildRoverModel() {
   for (const z of [-0.75, -0.25, 0.25, 0.75]) addDent('front', V(5.34, 1.3, z), V(1, 0, 0), 0.45, bumper);
   { const k = hull.faces[5]; addDent('front', bil(win[5].q, 0.5, 0.15), k.n, 0.5); addDent('front', bil(win[5].q, 0.2, 0.2), k.n, 0.4); addDent('front', bil(win[5].q, 0.8, 0.2), k.n, 0.4); }
   for (const fi of [8, 9]) { const f = hull.faces[fi]; addDent('front', bil(win[fi].q, 0.14, 0.16), f.n, 0.4); addDent('front', bil(win[fi].q, 0.5, 0.05), f.n, 0.35); }
-  addDent('port', V(3.28, 1.6, -H), V(0, 0, -1), 0.32); addDent('starboard', V(2.2, 1.8, H), V(0, 0, 1), 0.45); addDent('rear', V(X0, 2.4, 0.4), V(-1, 0, 0), 0.6);
+  addDent('port', V(3.28, 1.6, -H), V(0, 0, -1), 0.32); addDent('starboard', V(2.2, 1.5, H), V(0, 0, 1), 0.45); addDent('rear', V(X0, 2.4, 0.4), V(-1, 0, 0), 0.6);
   const crackM = new THREE.MeshBasicMaterial({ map: crackTex(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
   const cracks: THREE.Mesh[] = [];
   for (const w of windows.filter((q) => q.face === 6)) {
