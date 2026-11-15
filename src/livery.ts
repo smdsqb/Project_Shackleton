@@ -96,23 +96,29 @@ export function crinkleTexture(rx: number, ry: number) {
   const t = finish(c, true); t.repeat.set(rx, ry); t.colorSpace = THREE.NoColorSpace; return t;
 }
 
-/** The NASA "meatball": blue disc, stars, white orbit, red vector, white lettering. */
+/**
+ * Original Project Shackleton emblem: a crater rim at sunrise. The function keeps its old name so existing call sites still work.
+ * The 2026 Space Apps rules forbid generated content from using NASA logos, flags or mission identifiers, so no NASA insignia is drawn anywhere.
+ */
 export function meatball() {
-  const c = cv(1024, 1024), g = c.getContext('2d')!, r = seeded(42); g.scale(2, 2);
-  g.beginPath(); g.arc(256, 256, 250, 0, Math.PI * 2); g.fillStyle = NASA.blueCss; g.fill(); g.save(); g.clip();
-  for (let i = 0; i < 90; i++) { g.fillStyle = `rgba(255,255,255,${0.5 + r() * 0.5})`; g.beginPath(); g.arc(r() * 512, r() * 512, 1 + r() * 2.2, 0, 7); g.fill(); }
-  g.fillStyle = NASA.redCss; g.beginPath(); g.moveTo(40, 360); g.bezierCurveTo(150, 335, 330, 235, 480, 120); g.bezierCurveTo(370, 240, 280, 320, 175, 400); g.closePath(); g.fill();
-  g.save(); g.translate(256, 256); g.rotate(-0.42); g.strokeStyle = '#fff'; g.lineWidth = 7; g.beginPath(); g.ellipse(0, 0, 330, 105, 0, 0, 7); g.stroke(); g.restore();
-  g.fillStyle = '#fff'; g.font = '900 120px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('NASA', 256, 262);
-  g.restore();
+  const c = cv(1024, 1024), g = c.getContext('2d')!; g.scale(2, 2);
+  g.beginPath(); g.arc(256, 256, 250, 0, Math.PI * 2); g.fillStyle = '#1b222a'; g.fill(); g.save(); g.clip();
+  const sky = g.createLinearGradient(0, 0, 0, 512); sky.addColorStop(0, '#10161c'); sky.addColorStop(0.62, '#26323e'); sky.addColorStop(1, '#3a4856'); g.fillStyle = sky; g.fillRect(0, 0, 512, 512);
+  g.fillStyle = '#f0b429'; g.beginPath(); g.arc(256, 300, 62, Math.PI, 0); g.fill();
+  g.strokeStyle = 'rgba(240,180,41,.55)'; g.lineWidth = 5;
+  for (let i = 0; i < 9; i++) { const a = Math.PI + ((i + 0.5) * Math.PI) / 9; g.beginPath(); g.moveTo(256 + Math.cos(a) * 80, 300 + Math.sin(a) * 80); g.lineTo(256 + Math.cos(a) * 150, 300 + Math.sin(a) * 150); g.stroke(); }
+  g.fillStyle = '#0c1014'; g.beginPath(); g.moveTo(0, 300); g.bezierCurveTo(130, 285, 190, 330, 256, 332); g.bezierCurveTo(330, 330, 390, 285, 512, 300); g.lineTo(512, 512); g.lineTo(0, 512); g.closePath(); g.fill();
+  g.strokeStyle = '#e9edf1'; g.lineWidth = 6; g.beginPath(); g.moveTo(0, 300); g.bezierCurveTo(130, 285, 190, 330, 256, 332); g.bezierCurveTo(330, 330, 390, 285, 512, 300); g.stroke();
+  g.fillStyle = '#e9edf1'; g.font = '700 48px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('SHACKLETON', 256, 425);
+  g.restore(); g.strokeStyle = '#e9edf1'; g.lineWidth = 8; g.beginPath(); g.arc(256, 256, 246, 0, Math.PI * 2); g.stroke();
   return finish(c);
 }
 
-/** The "worm" wordmark: red, no crossbar on the As. */
+/** Plain "SHACKLETON" wordmark in graphite (replaces the NASA wordmark). */
 export function worm() {
   const c = cv(2048, 680), g = c.getContext('2d')!; g.scale(2, 2);
-  g.fillStyle = NASA.redCss; g.font = '900 250px Arial Black, Helvetica, Arial, sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'left';
-  let x = 20; for (const ch of 'N\u039BS\u039B') { g.fillText(ch, x, 175); x += g.measureText(ch).width + 14; }
+  g.fillStyle = '#39424c'; g.font = '800 104px Helvetica, Arial, sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'left';
+  let x = 20; for (const ch of 'SHACKLETON') { g.fillText(ch, x, 175); x += g.measureText(ch).width + 14; }
   return finish(c);
 }
 
@@ -126,12 +132,12 @@ export function plateTexture(text: string) {
   return finish(c);
 }
 
+/** Neutral mission pennant (crescent over a crater-rim stripe). Not a national or NASA flag. */
 export function flagTexture() {
   const c = cv(988, 520), g = c.getContext('2d')!; g.scale(2, 2);
-  for (let i = 0; i < 13; i++) { g.fillStyle = i % 2 ? '#f0efe9' : '#a53444'; g.fillRect(0, (i * 260) / 13, 494, 260 / 13 + 1); }   // sun-faded cloth, not dyed-in-yesterday synthetic
-  g.fillStyle = '#3c3b6e'; g.fillRect(0, 0, 198, 140);
-  g.fillStyle = '#f0efe9';
-  for (let row = 0; row < 9; row++) for (let col = 0; col < (row % 2 ? 5 : 6); col++) { g.beginPath(); g.arc((row % 2 ? 33 : 16) + col * 33, 12 + row * 15, 3.2, 0, 7); g.fill(); }
+  g.fillStyle = '#1b222a'; g.fillRect(0, 0, 494, 260); g.fillStyle = '#f0b429'; g.fillRect(0, 168, 494, 16);
+  g.fillStyle = '#e9edf1'; g.beginPath(); g.arc(120, 100, 54, 0, 7); g.fill(); g.fillStyle = '#1b222a'; g.beginPath(); g.arc(140, 92, 48, 0, 7); g.fill();
+  g.fillStyle = '#e9edf1'; g.font = '700 30px Helvetica, Arial, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText('SHACKLETON', 215, 98);
   return finish(c);
 }
 
