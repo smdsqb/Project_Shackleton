@@ -215,7 +215,7 @@ export function floorTextures(repeat: number) {
   const S = 1024, map = cv(S, S), bump = cv(S, S), g = map.getContext('2d')!, b = bump.getContext('2d')!, r = seeded(5);
   b.fillStyle = '#808080'; b.fillRect(0, 0, S, S);
   for (let ty = 0; ty < 2; ty++) for (let tx = 0; tx < 2; tx++) {
-    const v = 112 + Math.floor(r() * 5); g.fillStyle = `rgb(${v},${v + 2},${v + 6})`; g.fillRect(tx * 512, ty * 512, 512, 512);   // tiles differ by about 2 percent, not enough to read as a mismatch
+    const v = 112; g.fillStyle = `rgb(${v},${v + 2},${v + 6})`; g.fillRect(tx * 512, ty * 512, 512, 512);   // every tile exactly the same base value: any per-tile variance reads as a lighting mismatch under the ceiling ring
   }
   const id = g.getImageData(0, 0, S, S);
   for (let i = 0; i < S * S; i++) { const n = (r() - 0.5) * 14; id.data[i * 4] += n; id.data[i * 4 + 1] += n; id.data[i * 4 + 2] += n; }

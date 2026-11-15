@@ -1,5 +1,6 @@
-// Suit radio audio: carrier static, Apollo-style Quindar tones, and two voices (female link manager, male Houston).
-// Voices come from /api/tts (Groq Orpheus) when it works and fall back to the browser's own speech voices otherwise.
+// Suit radio audio: carrier static, Apollo-style Quindar tones, and the voices (Houston is the male radio voice; the
+// female voice is only used for crew members). Voices come from /api/tts when it works and fall back to the browser's
+// own speech voices otherwise.
 export type Who = 'female' | 'male';
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
