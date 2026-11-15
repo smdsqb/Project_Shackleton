@@ -71,6 +71,7 @@ const VIEWS: Record<string, [number[], number[]]> = {
   intdash: [[2.2, 2.75, 0.15], [4.7, 2.15, -0.25]],
   intback: [[4.1, 2.5, 0.85], [2.0, 2.0, -0.55]],
   intdoor: [[3.6, 2.6, 0.9], [1.9, 1.9, -1.35]],
+  intstar: [[3.85, 2.52, -0.55], [2.3, 2.3, 1.45]],   // seated at the wheel, looking across the cab at the starboard wall
 };
 const view = new URLSearchParams(location.search).get('view') ?? 'front3q';
 const [pos, tgt] = VIEWS[view] ?? VIEWS.front3q;
