@@ -267,9 +267,14 @@ export function buildRoverModel() {
   const RF = 0.17, hull = roundedHull(P, F, RF);
   type WinDef = { q: THREE.Vector3[]; polys: [number, number][][]; tint: ('b' | 'd')[]; r?: number; opening?: boolean };
   const win: Record<number, WinDef> = {
-    7: { q: [P[8], P[9], P[10], P[11]], polys: [[[.05, .16], [.29, .16], [.29, .84], [.05, .7]], [[.36, .12], [.64, .12], [.64, .9], [.36, .9]], [[.71, .16], [.95, .16], [.95, .7], [.71, .84]]], tint: ['b', 'b', 'b'] },
+    7: { q: [P[8], P[9], P[10], P[11]], polys: [[[.132, .192], [.349, .192], [.349, .783], [.132, .70]], [[.391, .175], [.609, .175], [.609, .80], [.391, .80]], [[.651, .192], [.868, .192], [.868, .70], [.651, .783]]], tint: ['b', 'b', 'b'] },
     5: { q: [P[4], P[5], P[9], P[8]], polys: [[[.12, .4], [.44, .4], [.44, .78], [.12, .78]], [[.56, .4], [.88, .4], [.88, .78], [.56, .78]]], tint: ['b', 'b'] },
-    6: { q: [P[7], P[6], P[10], P[11]], polys: [[[.04, .14], [.25, .14], [.29, .84], [.09, .84]], [[.31, .12], [.69, .12], [.65, .86], [.35, .86]], [[.75, .14], [.96, .14], [.91, .84], [.71, .84]]], tint: ['d', 'd', 'd'] },
+    // The pane polys must stay STRICTLY inside the inset hull panel (f.poly is pulled in by the round-over,
+    // roughly 0.17 m inside the true face edges). Outer panes whose edges reached the panel boundary made
+    // earcut swallow the hole - the triangulator silently filled it, and the glass behind vanished under an
+    // opaque patch of hull: the driver-side nose pane and the slanted skylight above it read as solid metal.
+    // These polys keep a >=6 cm margin and follow the nose taper (the cab narrows toward the front).
+    6: { q: [P[7], P[6], P[10], P[11]], polys: [[[.138, .20], [.31, .20], [.345, .72], [.204, .72]], [[.34, .20], [.66, .20], [.63, .72], [.37, .72]], [[.69, .20], [.858, .20], [.796, .72], [.655, .72]]], tint: ['d', 'd', 'd'] },
     8: { q: [P[4], P[8], P[11], P[7]], polys: [[[.08, .92], [.58, .92], [.3, .1]], [[.66, .9], [.94, .78], [.94, .22], [.38, .1]]], tint: ['b', 'b'], r: 0.14 },
     9: { q: [P[5], P[9], P[10], P[6]], polys: [[[.08, .92], [.58, .92], [.3, .1]], [[.66, .9], [.94, .78], [.94, .22], [.38, .1]]], tint: ['b', 'b'], r: 0.14 },
     3: { q: [P[0], P[4], P[7], P[3]], polys: [[[.136, .096], [.864, .096], [.864, .904], [.136, .904]]], tint: [], r: 0.25, opening: true },
@@ -516,7 +521,9 @@ export function buildRoverModel() {
     bumper: V(5.5, 1.3, 0), windscreen: V(4.4, 3.2, 0), dish: V(ANT.x, ROOF_Y + 0.7, ANT.z),
   };
 
-  const draws0 = bake(root), spinN = wheels.map((w) => bake(w.spin, false));
+  // ?nobake (dev viewer only) skips the draw-call merge so the ray probe can name the exact mesh
+  const nobake = typeof location !== 'undefined' && /[?&]nobake\b/.test(location.search);
+  const draws0 = nobake ? 0 : bake(root), spinN = nobake ? wheels.map(() => 0) : wheels.map((w) => bake(w.spin, false));
   return { draws0, spinN, root, chassis, cab, cabG, hatch: hatchObj, wheels, screens, radioScr, cabLight, bumper, dishG, stick, thrLever, pedalT, pedalB, parkLever, lamps: { mat: ledMat, meshes: ledMeshes }, ind: Object.fromEntries(indMats.map(({ k, m }) => [k, m])) as Record<string, THREE.MeshStandardMaterial>, dents, cracks, anchors, lockerPlates, STEP_X };
 }
 
