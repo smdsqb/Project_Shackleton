@@ -26,6 +26,7 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;   // the sun is a point source in vacuum: shadows are hard-edged, not soft studio blobs
+renderer.shadowMap.autoUpdate = false;   // shadow maps refresh at half rate (see frame()): the sun barely moves and one frame of latency in a hatch swing is invisible
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.36;
 document.body.prepend(renderer.domElement);
@@ -76,7 +77,7 @@ Object.assign(sun.shadow.camera, { left: -150, right: 150, top: 150, bottom: -15
 sun.shadow.bias = -0.0004;
 scene.add(sun, sun.target);
 const lamp = new THREE.SpotLight(0xffffff, 40, 45, 0.6, 0.5);
-lamp.castShadow = true; lamp.shadow.mapSize.set(1024, 1024); lamp.shadow.bias = -0.0005; lamp.visible = false; // helmet lamp: on only outside, in the suit
+lamp.castShadow = true; lamp.shadow.mapSize.set(1024, 1024); lamp.shadow.camera.far = 30; lamp.shadow.bias = -0.0005; lamp.visible = false; // helmet lamp: on only outside, in the suit; 30 m far plane keeps the rock field out of its depth pass
 lamp.target.position.set(0, 0, -1);
 camera.add(lamp, lamp.target);
 
@@ -328,10 +329,15 @@ function drawHud(az: number, el: number) {
 
 // ---------- loop ----------
 const clock = new THREE.Clock();
-let hudT = 0, litT = 0, bobT = 0;
+let hudT = 0, litT = 0, bobT = 0, frameN = 0;
+// adaptive resolution: the render scale floats between 1.0 and the device cap, so a weak GPU sheds pixels instead of frames
+const prCap = renderer.getPixelRatio();
+let pr = prCap, msAvg = 16, prT = 0;
 const fwd = new THREE.Vector3(), rgt = new THREE.Vector3(), mv = new THREE.Vector3(), sd = new THREE.Vector3();
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
+  frameN++;
+  renderer.shadowMap.needsUpdate = frameN % 2 === 0;   // half-rate shadows: the whole depth-pass load (sun + interior cube maps + helmet lamp) costs half
   camera.position.sub(shakeOff); shakeOff.set(0, 0, 0);
   const running = started && (locked || comms.isOpen || ui.isTabletOpen), w = clockRate(), dtSim = running ? dt * w : 0;
   simMs += dtSim * 1000; sim.cmdExposed = hab?.exposed ?? false;
@@ -342,7 +348,6 @@ function frame() {
   if (hab) {
     hab.shelter = !!rover && rover.inside;
     hab.update(dt, Math.min(dtSim, dt * 60), camera.position, sim, lookDir);
-    hab.update(dt, Math.min(dtSim, dt * 60), camera.position, sim);
     const alertOn = sim.shelter || !!sim.lockdown;
     crew?.setAlert(alertOn); sim.crewOutside = crew?.outside ?? 0;      // every astronaut hauls back to the hab
     if (running) crew?.update(dt, camera.position);
@@ -421,6 +426,15 @@ function frame() {
   earth.position.copy(camera.position).add(new THREE.Vector3(e.x, e.y, e.z).multiplyScalar(3000));
 
   litT += dt; hudT += dt;
+  if (started) {   // steer the render scale toward ~50-75 fps; touch the drawing buffer only when the bucket actually changes
+    msAvg += (dt * 1000 - msAvg) * Math.min(1, dt * 0.75); prT += dt;
+    if (prT > 2) {
+      prT = 0;
+      const want = msAvg > 20.5 ? pr - 0.25 : msAvg < 13.5 ? pr + 0.25 : pr;
+      const np = Math.max(1, Math.min(prCap, want));
+      if (np !== pr) { pr = np; renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight); }
+    }
+  }
   if (litT > 0.25) { litT = 0; sim.sunlit = isSunlit(arrayPos, sd); earthVisible = earthEl > 0.003 && isSunlit(dishPos, earthDir); }
   if (hudT > 0.25) { hudT = 0; drawHud(s.az, s.el); }
   if (fx.shake > 0.01) { const a = 0.16 * fx.shake; shakeOff.set((Math.random() - 0.5) * a, (Math.random() - 0.5) * a * 0.7, (Math.random() - 0.5) * a); camera.position.add(shakeOff); camera.rotation.x += (Math.random() - 0.5) * 0.035 * fx.shake; camera.rotation.z += (Math.random() - 0.5) * 0.06 * fx.shake; }
