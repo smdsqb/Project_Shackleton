@@ -67,7 +67,7 @@ let aoTex: THREE.CanvasTexture | null = null;
 function aoBlob(w: number, d: number) {
   if (!aoTex) {
     const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d')!;
-    const gr = g.createRadialGradient(64, 64, 8, 64, 64, 64); gr.addColorStop(0, 'rgba(0,0,0,.55)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    const gr = g.createRadialGradient(64, 64, 8, 64, 64, 64); gr.addColorStop(0, 'rgba(0,0,0,.38)'); gr.addColorStop(1, 'rgba(0,0,0,0)');   // gentle enough not to read as a stain on the decking; real occlusion under furniture is spread over 8 lamps
     g.fillStyle = gr; g.fillRect(0, 0, 128, 128); aoTex = new THREE.CanvasTexture(c);
   }
   const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: aoTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
