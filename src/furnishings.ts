@@ -56,6 +56,20 @@ export function medicalCabinet() {
   });
   b.box(0.12, 0.2, 0.22, M(0xb8d430, 0.5, 0.1), 0, 1.07 + 0.0, 0.25, 0.02); b.box(0.01, 0.07, 0.1, M(0x1c2a1a, 0.3, 0.3), -0.062, 1.1, 0.25, 0.004);    // AED
   b.box(0.16, 0.16, 0.3, red, 0, 0.58, 0.18, 0.03); b.cyl(0.06, 0.36, M(0x2f9d58, 0.4, 0.4), 0, 1.6, -0.25);                            // trauma bag, oxygen bottle
+  // stocked supplies: stethoscope, BP cuff, syringe tray, thermometer, bandage rolls, IV bags on a rail
+  { const st = M(0x2a3140, 0.35, 0.2), steelM = M(0xb4bac2, 0.3, 0.7);
+    b.m(new THREE.TorusGeometry(0.05, 0.009, 8, 20).rotateX(P / 2), st, 0, 0.135, -0.30);                                                  // coiled tubing
+    b.cyl(0.007, 0.14, st, 0.045, 0.13, -0.26, 0, 0, -0.6); b.cyl(0.007, 0.14, st, -0.045, 0.13, -0.26, 0, 0, 0.6);                       // ear tubes
+    b.cyl(0.022, 0.012, steelM, 0, 0.125, -0.30, 0, 0, 0, g, 12);                                                                          // chest piece
+    b.box(0.11, 0.045, 0.13, wh, 0, 0.565, 0.09, 0.015); b.box(0.05, 0.055, 0.16, M(0x9aa1ab, 0.8, 0), 0, 0.575, 0.09, 0.02);             // BP cuff on its case
+    b.box(0.05, 0.02, 0.18, wh, 0, 0.522, -0.37, 0.008);                                                                                    // syringe tray
+    for (const dz of [-0.05, 0, 0.05]) { b.cyl(0.0065, 0.1, M(0xe8f2f8, 0.15, 0), 0, 0.545, -0.37 + dz, P / 2); b.cyl(0.002, 0.045, steelM, -0.028, 0.545, -0.37 + dz, P / 2); }
+    b.box(0.035, 0.03, 0.07, M(0xe8832a, 0.5, 0.05), 0, 0.525, 0.38, 0.006);                                                               // thermometer case
+    for (const dz of [0.14, 0.23, 0.32]) b.cyl(0.034, 0.05, M(0xf1efe6, 0.6, 0), 0, 1.432, dz, 0, 0, 0, g, 12);                            // bandage rolls
+    for (const dz of [0.14, 0.23, 0.32]) b.m(new THREE.TorusGeometry(0.034, 0.006, 6, 14).rotateX(P / 2), M(0xc0392b, 0.5, 0.05), 0, 1.432, dz);
+    b.cyl(0.005, 0.34, steelM, 0, 1.375, 0.10, 0, 0, 0, g, 8).rotation.x = P / 2;                                                          // IV rail
+    for (const dz of [0.10, 0.20]) { b.box(0.018, 0.16, 0.09, glassM(0.45, 0xd6ecf7), 0, 1.275, dz, 0.004); b.box(0.02, 0.02, 0.03, M(0xc0392b, 0.5, 0.05), 0, 1.35, dz, 0.004); }
+  }
   for (const s of [-1, 1]) {
     const pv = pivotAt(g, -D / 2, 0.1, s * (W / 2 + 0.003)); b.box(0.022, 1.64, 0.44, wh, 0, 0.82 + 0.05, -s * 0.22, 0.008, pv);
     b.cyl(0.01, 0.3, steel, -0.025, 0.9, -s * 0.4, 0, 0, 0, pv, 10);

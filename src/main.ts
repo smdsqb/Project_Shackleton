@@ -16,8 +16,8 @@ import { UI, ensureAudio, beep, rumble, boom, hiss } from './ui';
 import { Fx } from './fx';
 import { Storm } from './storm';
 
-// Initialize Vercel Web Analytics
-inject();
+// Initialize Vercel Web Analytics (production only: the inject script 404s when served by vite dev)
+if (import.meta.env.PROD) inject();
 
 const MISSION_DAY0 = 214, EYE = 1.7, G = 1.62;
 

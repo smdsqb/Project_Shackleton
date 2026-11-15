@@ -10,8 +10,8 @@
   html, body { margin:0; height:100%; background:var(--bg); overflow:hidden; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; color:var(--fg); }
   canvas { display:block; }
   .ok { color:var(--cyan); } .warn { color:var(--amber); } .bad { color:var(--red); }
-  #helpHint { position:fixed; right:14px; bottom:14px; padding:6px 10px; font-size:10px; letter-spacing:.22em; color:#7d8a99; background:rgba(5,7,10,.55); border:1px solid rgba(125,138,153,.35); border-radius:6px; pointer-events:none; }
-  #helpHint b { color:var(--cyan); font-weight:normal; }
+  #helpHint { position:fixed; left:50%; transform:translateX(-50%); bottom:16px; padding:11px 22px; font-size:14px; letter-spacing:.24em; color:#aebac9; background:rgba(5,7,10,.8); border:1px solid rgba(79,216,255,.55); border-radius:8px; box-shadow:0 0 18px rgba(79,216,255,.18); pointer-events:none; z-index:3; }
+  #helpHint b { color:var(--cyan); font-weight:bold; padding:0 3px; }
   #help { position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:4; background:rgba(3,5,8,.55); }
   #help.on { display:flex; }
   #help .sheet { width:min(620px,92vw); max-height:94vh; overflow:auto; padding:16px 24px; background:rgba(5,8,13,.92); border:1px solid rgba(79,216,255,.35); border-radius:8px; }
