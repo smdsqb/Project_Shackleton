@@ -21,7 +21,10 @@ if (import.meta.env.PROD) inject();
 
 const MISSION_DAY0 = 214, EYE = 1.7, G = 1.62;
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+// ?quality=low: for weak GPUs — no MSAA (fixed at context creation, so it must be chosen up front), 1024 sun shadow
+// every third frame, dimmer reflections and a lower render scale. ?quality=ultra (interior cube shadows) lives in hab.ts.
+const QLOW = /[?&]quality=low\b/.test(location.search);
+const renderer = new THREE.WebGLRenderer({ antialias: !QLOW, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 // a lost WebGL context (heavy GPU load while switching tabs/windows) used to leave the page frozen for good:
 // acknowledge the loss and reload cleanly instead of spinning dead frames forever
@@ -65,7 +68,7 @@ const scene = new THREE.Scene();
   );
   earthGlow.position.set(-55, 18, -30); env.add(earthGlow);
   scene.environment = new THREE.PMREMGenerator(renderer).fromScene(env, 0.04).texture;
-  scene.environmentIntensity = 0.4; // reflections without washing the shadow sides milky
+  scene.environmentIntensity = QLOW ? 0.15 : 0.4; // reflections without washing the shadow sides milky
 }
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 45000);
 camera.position.set(-1.5, heightAt(0, 0) + EYE, 0.5);
@@ -75,12 +78,12 @@ scene.add(amb);
 let ambK = 0.19;
 const sun = new THREE.DirectionalLight(0xfff4e6, 4.0);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);   // 2048 over the ±150 m box still resolves hab and rover edges; 4096 cost 4x the fill for nothing the eye saw
+sun.shadow.mapSize.set(QLOW ? 1024 : 2048, QLOW ? 1024 : 2048);   // 2048 over the ±150 m box still resolves hab and rover edges; 4096 cost 4x the fill for nothing the eye saw
 Object.assign(sun.shadow.camera, { left: -150, right: 150, top: 150, bottom: -150, near: 1, far: 1400 });
 sun.shadow.bias = -0.0004;
 scene.add(sun, sun.target);
 const lamp = new THREE.SpotLight(0xffffff, 40, 45, 0.6, 0.5);
-lamp.castShadow = true; lamp.shadow.mapSize.set(1024, 1024); lamp.shadow.camera.far = 30; lamp.shadow.bias = -0.0005; lamp.visible = false; // helmet lamp: on only outside, in the suit; 30 m far plane keeps the rock field out of its depth pass
+lamp.castShadow = !QLOW; lamp.shadow.mapSize.set(1024, 1024); lamp.shadow.camera.far = 30; lamp.shadow.bias = -0.0005; lamp.visible = false; // helmet lamp: on only outside, in the suit; 30 m far plane keeps the rock field out of its depth pass
 lamp.target.position.set(0, 0, -1);
 camera.add(lamp, lamp.target);
 
@@ -349,10 +352,42 @@ function clockRate() { const slow = dir.active || hab?.busy || hab?.suitOn || si
 // ---------- loop ----------
 const clock = new THREE.Clock();
 let litT = 0, bobT = 0, frameN = 0;
-// adaptive resolution: the render scale floats between 0.75 and the device cap, so a weak GPU sheds pixels instead of frames
+// adaptive resolution: the render scale floats between 0.6 and the device cap, so a weak GPU sheds pixels instead of
+// frames. 0.6 was 0.75: on a machine 3x over budget, shedding 44% of the pixels still left it 2x over; 0.6 sheds 64%.
 const prCap = renderer.getPixelRatio();
-let pr = Math.min(prCap, 1), msAvg = 16, prT = 0;   // start at 1x: a weak GPU gets its first seconds smooth, a strong one climbs to its cap
+let pr = Math.min(prCap, QLOW ? 0.75 : 1), msAvg = 16, prWall = 0;   // start low on purpose: a weak GPU gets its first seconds smooth, a strong one climbs to its cap
 const fwd = new THREE.Vector3(), rgt = new THREE.Vector3(), mv = new THREE.Vector3(), sd = new THREE.Vector3();
+// dev-only diagnostic hook (renderer.info / render scale / test teleports; never ships to production)
+if (import.meta.env.DEV) (window as any).__diag = {
+  info: () => ({ ...renderer.info.render, programs: renderer.info.programs?.length, ...renderer.info.memory }),
+  pr: () => pr,
+  tele: (x: number, z: number, yawTo = -Math.PI / 2, pitchTo = 0) => { camera.position.set(x, heightAt(x, z) + EYE, z); yaw = yawTo; pitch = pitchTo; vy = 0; },
+};
+
+// ---------- performance governor ----------
+// Sustained slow frames (not a single hitch) trip a lighter render: shadow map halves, depth pass drops to every third
+// frame, reflections dim. It reverts on its own after three consecutive fast checks, so a passing load spike does not
+// leave the game looking flat for good. MSAA cannot be dropped after context creation — that is ?quality=low's job.
+// Every timer here runs on wall-clock time: dt is clamped at 50 ms, and on a machine running 2 fps a dt-based
+// timer would need a minute of wall time to tick 2 s. The same fix is applied to the render-scale adjuster.
+let perfMode = QLOW, perfWall = 0, perfCool = 0, shadowEvery = QLOW ? 3 : 2;
+let wallT = 0, lastWall = performance.now();
+function perfNote(text: string) {
+  const n = document.createElement('div');
+  n.textContent = text;
+  n.style.cssText = 'position:fixed;bottom:64px;left:50%;transform:translateX(-50%);z-index:4;padding:7px 16px;font:11px ui-monospace,Menlo,Consolas,monospace;letter-spacing:.2em;color:#aebac9;background:rgba(5,7,10,.8);border:1px solid rgba(79,216,255,.45);border-radius:6px;pointer-events:none;transition:opacity 1s';
+  document.body.append(n);
+  window.setTimeout(() => { n.style.opacity = '0'; window.setTimeout(() => n.remove(), 1100); }, 5000);
+}
+function setPerfMode(on: boolean) {
+  perfMode = on;
+  sun.shadow.mapSize.set(on ? 1024 : 2048, on ? 1024 : 2048);
+  if (sun.shadow.map) { sun.shadow.map.dispose(); (sun.shadow as any).map = null; }   // force a re-alloc at the new size
+  shadowEvery = on ? 3 : 2;
+  lamp.castShadow = !on;
+  scene.environmentIntensity = on ? 0.15 : 0.4;
+  perfNote(on ? 'PERFORMANCE MODE · LIGHTER SHADOWS AND REFLECTIONS' : 'FULL GRAPHICS RESTORED');
+}
 /** the frame body. frame() schedules the next tick FIRST and wraps this in try/catch, so no single exception
  *  (a lost GL context, a NaN, anything) can ever stop the loop for good: the game recovers on the next tick. */
 function frame() {
@@ -361,8 +396,9 @@ function frame() {
 }
 function stepFrame() {
   const dt = Math.min(clock.getDelta(), 0.05);
+  const nowWall = performance.now(); wallT += Math.min(nowWall - lastWall, 250); lastWall = nowWall;   // real elapsed time, capped so a hidden tab cannot jump the timers
   frameN++;
-  renderer.shadowMap.needsUpdate = frameN % 2 === 0;   // half-rate shadows: the whole depth-pass load (sun + interior cube maps + helmet lamp) costs half
+  renderer.shadowMap.needsUpdate = frameN % shadowEvery === 0;   // half-rate shadows: the whole depth-pass load (sun + interior cube maps + helmet lamp) costs half
   camera.position.sub(shakeOff); shakeOff.set(0, 0, 0);
   const running = started && (locked || comms.isOpen || ui.isTabletOpen), w = clockRate(), dtSim = running ? dt * w : 0;
   simMs += dtSim * 1000; sim.cmdExposed = hab?.exposed ?? false;
@@ -452,17 +488,25 @@ function stepFrame() {
 
   litT += dt;
   if (started) {   // steer the render scale toward ~50-75 fps; touch the drawing buffer only when the bucket actually changes
-    msAvg += (dt * 1000 - msAvg) * Math.min(1, dt * 0.75); prT += dt;
-    if (prT > 1) {
-      prT = 0;
+    msAvg += (dt * 1000 - msAvg) * Math.min(1, dt * 0.75);
+    if (wallT - prWall > 1) {
+      prWall = wallT;
       const want = msAvg > 21 ? pr - 0.25 : msAvg < 13.5 ? pr + 0.25 : pr;
-      const np = Math.max(0.75, Math.min(prCap, want));
+      const np = Math.max(0.6, Math.min(prCap, want));
       if (np !== pr) { pr = np; renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight); }
+    }
+    if (wallT - perfWall > 2) {
+      perfWall = wallT;
+      if (!perfMode && msAvg > 30) setPerfMode(true);
+      else if (perfMode && !QLOW && msAvg < 13) { if (++perfCool >= 3) { perfCool = 0; setPerfMode(false); } }   // three fast checks in a row before restoring quality
+      else perfCool = 0;
     }
   }
   if (litT > 0.25) { litT = 0; sim.sunlit = isSunlit(arrayPos, sd); earthVisible = earthEl > 0.003 && isSunlit(dishPos, earthDir); }
   if (fx.shake > 0.01) { const a = 0.16 * fx.shake; shakeOff.set((Math.random() - 0.5) * a, (Math.random() - 0.5) * a * 0.7, (Math.random() - 0.5) * a); camera.position.add(shakeOff); camera.rotation.x += (Math.random() - 0.5) * 0.035 * fx.shake; camera.rotation.z += (Math.random() - 0.5) * 0.06 * fx.shake; }
-  renderer.render(scene, camera);
+  // the intro/pause overlay is fully opaque: rendering a million triangles behind it is pure waste. It still renders
+  // during the fade-out (.leaving) and whenever the overlay is down, so nothing ever pops in on screen.
+  if (intro.style.display === 'none' || intro.classList.contains('leaving')) renderer.render(scene, camera);
 }
 
 // ---------- boot ----------
