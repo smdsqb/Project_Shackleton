@@ -361,7 +361,32 @@ const fwd = new THREE.Vector3(), rgt = new THREE.Vector3(), mv = new THREE.Vecto
 if (import.meta.env.DEV) (window as any).__diag = {
   info: () => ({ ...renderer.info.render, programs: renderer.info.programs?.length, ...renderer.info.memory }),
   pr: () => pr,
+  lights: () => {
+    let pl = 0, sl = 0, dl = 0, cast = 0;
+    scene.traverseVisible((o: any) => { if (o.isLight) { if (o.isPointLight) { pl++; if (o.castShadow) cast++; } else if (o.isSpotLight) sl++; else if (o.isDirectionalLight) dl++; } });
+    return { point: pl, spot: sl, dir: dl, pointShadow: cast };
+  },
+  scene: () => {
+    let meshes = 0, mats = new Set<any>(), tris = 0, casts = 0;
+    scene.traverseVisible((o: any) => { if (o.isMesh || o.isPoints || o.isLine) { meshes++; mats.add(o.material); casts += o.castShadow ? 1 : 0; const g = o.geometry; if (g && o.isMesh) tris += (g.index ? g.index.count : g.attributes.position.count) / 3 * ((o as any).count ?? 1); } });
+    return { meshes, materials: mats.size, tris: Math.round(tris), shadowCasters: casts };
+  },
   tele: (x: number, z: number, yawTo = -Math.PI / 2, pitchTo = 0) => { camera.position.set(x, heightAt(x, z) + EYE, z); yaw = yawTo; pitch = pitchTo; vy = 0; },
+  cam: () => camera,
+  culled: () => {   // replicate three.js frustum culling: what this camera would actually submit this frame
+    camera.updateMatrixWorld(); camera.updateProjectionMatrix();
+    const fr = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+    let calls = 0, tris = 0, casts = 0;
+    const bs = new THREE.Sphere();
+    scene.traverseVisible((o: any) => {
+      if (o.isMesh || o.isPoints || o.isLine) {
+        const g = o.geometry;
+        if (g) { if (!g.boundingSphere) g.computeBoundingSphere(); bs.copy(g.boundingSphere).applyMatrix4(o.matrixWorld); }
+        if (!g || fr.intersectsSphere(bs)) { calls++; if (o.isMesh) tris += (g.index ? g.index.count : g.attributes.position.count) / 3 * (o.count ?? 1); if (o.castShadow) casts++; }
+      }
+    });
+    return { visibleObjects: calls, tris: Math.round(tris), visibleShadowCasters: casts };
+  },
 };
 
 // ---------- performance governor ----------
@@ -529,6 +554,39 @@ function log(text: string) {
   await pDem;
   await new Promise((r) => setTimeout(r, 60));
   try { buildWorld(); dTer('READY', 'ok'); } catch (err) { console.error(err); dTer('FAILED', 'warn'); const li = document.createElement('li'); li.textContent = String((err as Error)?.message ?? err).slice(0, 90); li.style.color = '#ff4d4d'; bootEl.append(li); return; }
+
+  // ---------- GPU budget check ----------
+  // MSAA and the other context-level settings are fixed the moment the WebGL context is created: a machine too weak
+  // for them can never drop them at runtime — the adaptive scale and the perf governor only shed pixels and shadows.
+  // So the only honest cure for a weak GPU is to KNOW before the first frame: render the real scene a dozen times
+  // while the boot screen (still opaque) hides it — the render loop is not running yet, so nothing doubles up — and
+  // if the median frame is over 33 ms this machine restarts once with ?quality=low, remembered in localStorage.
+  // This runs while the ephemeris and space-weather fetches are still in flight, so it costs no extra boot time.
+  // ?quality=high in the address bar clears the stored verdict and forces full quality for good.
+  {
+    const qGiven = /[?&]quality=(low|high|ultra)\b/.exec(location.search)?.[1] ?? null;
+    let verdict = qGiven;
+    try { if (!verdict) verdict = localStorage.getItem('shack-gpu'); } catch { /* private mode: re-check every boot */ }
+    if (qGiven) { try { localStorage.setItem('shack-gpu', qGiven); } catch { /* not stored: this session only */ } }
+    if (!verdict) {
+      const dG = log('GPU CAPABILITY CHECK');
+      const t: number[] = [];
+      try { for (let i = 0; i < 12; i++) { const a = performance.now(); renderer.render(scene, camera); t.push(performance.now() - a); } } catch { /* a failed render falls through to the default path */ }
+      const mid = t.length > 4 ? [...t.slice(2)].sort((a, b) => a - b)[Math.floor((t.length - 2) / 2)] : 16;   // drop the two compile-heavy warm-up frames, take the median
+      verdict = mid > 33 ? 'low' : 'high';
+      try { localStorage.setItem('shack-gpu', verdict); } catch { /* not stored: re-check next boot */ }
+      dG(verdict === 'low' ? 'WEAK · LIGHT MODE' : 'OK', verdict === 'low' ? 'warn' : 'ok');
+    }
+    if (verdict === 'low' && !QLOW) {
+      // the stored verdict is only meaningful with the light WebGL context, which is created at page load:
+      // restart once with ?quality=low (the URL param also keeps the verdict visible and overridable)
+      const u = new URL(location.href); u.searchParams.set('quality', 'low');
+      await new Promise((r) => setTimeout(r, 600));   // let the verdict on the boot screen be read for a moment
+      location.replace(u.href);
+      return;   // this page is about to be replaced: never unlock ENTER on it
+    }
+  }
+
   await Promise.all([pEph, pFl]);
   enter.disabled = false; enter.textContent = 'ENTER THE OUTPOST';
   frame();

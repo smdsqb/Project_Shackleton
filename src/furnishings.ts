@@ -13,7 +13,7 @@ const glassM = (o = 0.14, c = 0xdfeaf3) => new THREE.MeshPhysicalMaterial({ colo
 class B {
   constructor(public g: THREE.Object3D) {}
   m(geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, rx = 0, ry = 0, rz = 0, parent: THREE.Object3D = this.g) {
-    const o = new THREE.Mesh(geo, mat); o.position.set(x, y, z); o.rotation.set(rx, ry, rz); o.castShadow = mat !== undefined && !(mat as THREE.Material).transparent; o.receiveShadow = true; parent.add(o); return o;
+    const o = new THREE.Mesh(geo, mat); o.position.set(x, y, z); o.rotation.set(rx, ry, rz); o.castShadow = false; o.receiveShadow = true; parent.add(o); return o;   // interior furniture: the shell already shades the interior, so casting would only cost depth-pass draw calls
   }
   box(w: number, h: number, d: number, mat: THREE.Material, x: number, y: number, z: number, r = 0.015, parent: THREE.Object3D = this.g) { return this.m(rb(w, h, d, r), mat, x, y, z, 0, 0, 0, parent); }
   cyl(r: number, h: number, mat: THREE.Material, x: number, y: number, z: number, rx = 0, ry = 0, rz = 0, parent: THREE.Object3D = this.g, seg = 20) { return this.m(new THREE.CylinderGeometry(r, r, h, seg), mat, x, y, z, rx, ry, rz, parent); }
