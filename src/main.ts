@@ -387,6 +387,7 @@ if (import.meta.env.DEV) (window as any).__diag = {
     });
     return { visibleObjects: calls, tris: Math.round(tris), visibleShadowCasters: casts };
   },
+  tele: (x: number, z: number, yawTo = -Math.PI / 2, pitchTo = 0) => { camera.position.set(x, heightAt(x, z) + EYE, z); yaw = yawTo; pitch = pitchTo; vy = 0; },
 };
 
 // ---------- performance governor ----------
