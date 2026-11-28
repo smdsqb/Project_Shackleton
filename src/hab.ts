@@ -155,13 +155,17 @@ export class Hab {
     const glowM = (c: number, k = 1.1) => { const m = new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: k, roughness: 0.4 }); this.glows.push({ m, base: k }); return m; };
     mesh(new THREE.TorusGeometry(3 * K, 0.05, 12, 64).rotateX(P / 2), glowM(0xe6eeff, 0.34), 0, 3.5, 0);
     mesh(new THREE.TorusGeometry(1.2 * K, 0.04, 12, 48).rotateX(P / 2), glowM(0xffe2bd, 0.22), 0, 3.75, 0);
-    // lighting plan: cool general light, cooler task light over the lab, warm light at the galley and bunks, a cyan wash at the comms desk
+    // lighting plan: cool general light, cooler task light over the lab, warm light at the galley and bunks, a cyan wash at the comms desk.
+    // FOUR ring lamps, not eight: three.js compiles the scene's light count into every fragment shader, and every
+    // light is evaluated for every pixel of every surface, everywhere (the terrain outside pays for hab lamps too).
+    // Four at double intensity keep the same total flux and the same even feel; the emissive ring strips still read
+    // as a continuous source. Every light removed here is a per-pixel saving on every frame, on every machine.
     const lamp = (c: number, i: number, dist: number, x: number, y: number, z: number, sh = false) => { const l = new THREE.PointLight(c, i, dist, dist === 0 ? 1.4 : 2); if (sh) { l.castShadow = true; l.shadow.mapSize.set(512, 512); l.shadow.camera.far = 14; l.shadow.bias = -0.002; l.shadow.normalBias = 0.03; l.shadow.radius = 3; } l.position.set(x, y, z); this.root.add(l); this.lights.push({ l, base: i, color: c }); };
     // interior cube shadows are opt-in (?quality=ultra): a cube map is SIX depth passes of everything within 14 m,
     // refreshed every other frame — by far the biggest constant frame cost on weak GPUs, for a subtle soft-shadow gain
     const ultra = typeof location !== 'undefined' && /[?&]quality=ultra\b/.test(location.search);
-    for (let i = 0; i < 8; i++) { const a = ((i + 0.5) * P) / 4; lamp(0xf1f4fa, 4.5, 0, 3.9 * K / 1.3 * Math.cos(a), 3.3, 3.9 * K / 1.3 * Math.sin(a), i === 0 && ultra); }   // even LED ring in the ceiling: no hot spot under the player
-    for (const x of [-2, 0, 2]) lamp(0xdfe9f7, 3, 5, x * K, 2.5, -1.6 * K);   // task lights over the benches
+    for (let i = 0; i < 4; i++) { const a = ((i + 0.5) * P) / 2; lamp(0xf1f4fa, 9, 0, 3.9 * K / 1.3 * Math.cos(a), 3.3, 3.9 * K / 1.3 * Math.sin(a), i === 0 && ultra); }   // even LED ring in the ceiling: no hot spot under the player
+    for (const x of [-2, 2]) lamp(0xdfe9f7, 3, 5, x * K, 2.5, -1.6 * K);   // task lights over the end benches (the centre bench sits under the ring)
     lamp(0xffe2bd, 3.5, 5, 0, 2.5, GZ);                                          // galley
 
     // ---- portholes, decals, livery ----
@@ -188,7 +192,11 @@ export class Hab {
     decal(-0.67, 0.95, 0.5, 1.65, flagTexture(), R + 0.012);
     decal(-0.9 * P, 0.5, 0.5, 1.93, ball, R - 0.075, true);
 
-    shadowOn = true;
+    // Everything from here on is an interior fitting. None of it casts a sun shadow on purpose: the shell already
+    // shades the whole interior from the sun, so a fitting's depth-write can never be seen — but every caster still
+    // costs a draw call in the sun's depth pass every second frame. The shell, dome, hoops, seams and airlock
+    // tunnels (the silhouette you actually see from outside) still cast, via their explicit `true`.
+    shadowOn = false;
     // ---- wall-mounted fittings, set around the inside of the drum by angle ----
     const fit = (th: number, o: { w: number; h: number; d?: number; y?: number; color: number; text?: string; glow?: boolean; r?: number; accent?: number | null; badge?: boolean }) => {
       const g = new THREE.Group(), r = (o.r ?? 4.9) + DR, d = o.d ?? 0.8, y0f = o.y ?? 0;

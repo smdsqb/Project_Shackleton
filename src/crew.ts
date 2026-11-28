@@ -387,7 +387,13 @@ export class Bot {
   kx = 0; kz = 0; bumpT = 0; rushed = false; deferStop = -1; ov = 0; follow = false; followT = 0; ackT = rnd(4, 12); pyAdd = 0;
   constructor(public spec: Spec, private crew: Crew) { this.rig = build(spec); this.cruise = 1.05 * spec.tempo; this.setEva(false); }
 
-  setEva(on: boolean) { this.eva = on; for (const o of this.rig.ind) o.visible = !on; for (const o of this.rig.skinEx) o.visible = !on; for (const o of this.rig.eva) o.visible = on; }
+  setEva(on: boolean) {
+    this.eva = on; for (const o of this.rig.ind) o.visible = !on; for (const o of this.rig.skinEx) o.visible = !on; for (const o of this.rig.eva) o.visible = on;
+    // sun-shadow casting follows the EVA flag: a bot inside the pressure hull can never cast a visible sun shadow
+    // (the shell already shades the interior), but every one of its ~dozens of meshes still cost a draw call in the
+    // sun's depth pass every second frame. Swap the cast on the way in/out; this changes no shader and recompiles nothing.
+    this.rig.root.traverse((o: any) => { if (o.isMesh) o.castShadow = on; });
+  }
   get asleep() { return this.sleepStage === 3; }
 
   /** Drop everything and run for the shelter spot, wherever you are: asleep, at a console, or out on the surface. */

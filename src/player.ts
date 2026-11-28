@@ -20,7 +20,7 @@ export class Player {
   private crewBody = buildSuit({ suited: false, shadowOnly: true });
   private prints: THREE.InstancedMesh; private nPrints = 0; private foot = 1; private acc = 0;
   private heldExt: THREE.Group; private sprayPts: THREE.Points; private sprayPos = new Float32Array(160 * 3); private sprayVel = new Float32Array(160 * 3); private sprayLife = new Float32Array(160); private sprayOn = false; private sprayI = 0;
-  private dummy = new THREE.Object3D(); private lastSuit: boolean | null = null; private phase = 0;
+  private dummy = new THREE.Object3D(); private lastSuit: boolean | null = null; private lastOutside: boolean | null = null; private phase = 0;
 
   constructor(scene: THREE.Scene, private camera: THREE.Camera) {
     this.body.add(this.suitBody, this.crewBody); scene.add(this.body);
@@ -59,6 +59,12 @@ export class Player {
     if (suitOn !== this.lastSuit) {
       this.lastSuit = suitOn;
       this.suitBody.visible = suitOn; this.crewBody.visible = !suitOn;
+    }
+    // the body exists to cast the player's shadow: inside the pressure hull that shadow can never be seen (the shell
+    // already shades the interior), so drop its cast there and save its depth-pass draw calls
+    if (outside !== this.lastOutside) {
+      this.lastOutside = outside;
+      for (const b of [this.suitBody, this.crewBody]) b.traverse((o: any) => { if (o.isMesh) o.castShadow = outside; });
     }
     const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
     this.body.position.set(pos.x - fx * 0.14, pos.y - EYE, pos.z - fz * 0.14); this.body.rotation.y = yaw;

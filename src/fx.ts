@@ -58,7 +58,9 @@ export class Fx {
     this.smoke = new Particles(scene, 1400, false, 0.25, 0.6, 2.6); this.spark = new Particles(scene, 1800, true, G, 0, -0.2, gnd);
     this.spray = new Particles(scene, 1800, false, G, 0.15, 1.2, gnd); this.glow = new Particles(scene, 300, true, 0, 2.2, 1.6);
     // lights are created now (at zero) so adding an effect never changes the light count and forces a shader recompile
-    for (let i = 0; i < 2; i++) { const l = new THREE.PointLight(0xffd9a0, 0, 70, 1.6); scene.add(l); this.flashes.push({ l, t: 9, peak: 0 }); }
+    // (one flash light, not two: every light in the scene is evaluated for every pixel of every surface, every frame;
+    // a second simultaneous flash bought nothing a brighter one does not)
+    for (let i = 0; i < 1; i++) { const l = new THREE.PointLight(0xffd9a0, 0, 70, 1.6); scene.add(l); this.flashes.push({ l, t: 9, peak: 0 }); }
     this.hazard = new THREE.PointLight(0xff7a2a, 0, 16, 2); scene.add(this.hazard);
     this.gy = heightAt(0, 0); this.batt = new THREE.Vector3(9.75, heightAt(9.75, -9) + 1.0, -9); this.rad = new THREE.Vector3(-7, heightAt(-7, -11) + 1.4, -11);
     this.lab = new THREE.Vector3(0, this.gy + 1.15, -1.7); this.water = new THREE.Vector3(-HAB_R + 1.2, this.gy + 1.3, 2.6);

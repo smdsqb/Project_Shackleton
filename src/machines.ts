@@ -31,13 +31,13 @@ function gaugeTex(v: number) {
 class B {
   constructor(public g: THREE.Group, private fans: THREE.Object3D[]) {}
   m(geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, rx = 0, ry = 0, rz = 0) {
-    const o = new THREE.Mesh(geo, mat); o.position.set(x, y, z); o.rotation.set(rx, ry, rz); o.castShadow = o.receiveShadow = true; this.g.add(o); return o;
+    const o = new THREE.Mesh(geo, mat); o.position.set(x, y, z); o.rotation.set(rx, ry, rz); o.castShadow = false; o.receiveShadow = true; this.g.add(o); return o;   // interior machinery: never casts sun shadows (the shell already shades the interior), but every caster costs a depth-pass draw call
   }
   box(w: number, h: number, d: number, mat: THREE.Material, x: number, y: number, z: number, r = 0.03) { return this.m(rb(w, h, d, r), mat, x, y, z); }
   cyl(r: number, h: number, mat: THREE.Material, x: number, y: number, z: number, rx = 0, ry = 0, rz = 0, seg = 24) { return this.m(new THREE.CylinderGeometry(r, r, h, seg), mat, x, y, z, rx, ry, rz); }
   dome(r: number, mat: THREE.Material, x: number, y: number, z: number, flip = false) { return this.m(new THREE.SphereGeometry(r, 18, 10, 0, P * 2, 0, P / 2), mat, x, y, z, flip ? P : 0); }
   pipe(pts: V[], r: number, mat: THREE.Material) {
-    const o = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(...p)), false, 'centripetal'), pts.length * 12, r, 8), mat); o.castShadow = o.receiveShadow = true; this.g.add(o); return o;
+    const o = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(...p)), false, 'centripetal'), pts.length * 12, r, 8), mat); o.castShadow = false; o.receiveShadow = true; this.g.add(o); return o;
   }
   gauge(x: number, y: number, z: number, v: number) {
     this.m(new THREE.TorusGeometry(0.045, 0.008, 8, 24).rotateY(P / 2), M(COL.steel, 0.3, 0.7), x, y, z);
